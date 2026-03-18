@@ -21,6 +21,22 @@ interface DesignerActivity {
   projects: string[];
 }
 
+interface FigmaFileStats {
+  name: string;
+  project: string;
+  edits: number;
+  comments: number;
+  designers: string[];
+  lastModified: string;
+}
+
+interface Flag {
+  type: "danger" | "warn" | "ok" | "info";
+  category: string;
+  title: string;
+  detail: string;
+}
+
 interface AsanaTask {
   gid: string;
   name: string;
@@ -35,6 +51,7 @@ interface AsanaTask {
 
 interface DataSource {
   figmaActivity: DesignerActivity[] | null;
+  figmaFileStats: FigmaFileStats[];
   asanaTasks: AsanaTask[] | null;
   completedTasks: AsanaTask[] | null;
   snapshots: WeeklySnapshot[];
@@ -136,8 +153,8 @@ function initials(name: string): string {
 
 export default function DesignIntelDashboard() {
   const [source, setSource] = useState<DataSource>({
-    figmaActivity: null, asanaTasks: null,
-    completedTasks: null, snapshots: [],
+    figmaActivity: null, figmaFileStats: [],
+    asanaTasks: null, completedTasks: null, snapshots: [],
     figmaFiles: [], asanaFiles: [],
     lastFetched: { figma: null, asana: null },
     mode: "empty",
@@ -145,7 +162,7 @@ export default function DesignIntelDashboard() {
   const [loading, setLoading] = useState(true);
   const [apiError, setApiError] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
-  const [activeTab, setActiveTab] = useState<"activity" | "tasks" | "pressure" | "workload" | "trends">("activity");
+  const [activeTab, setActiveTab] = useState<"activity" | "tasks" | "pressure" | "workload" | "trends" | "flags">("activity");
 
   const fetchFromApi = useCallback(async (force = false) => {
     setRefreshing(true);
@@ -163,8 +180,10 @@ export default function DesignIntelDashboard() {
         fetch("/api/cache", { headers }),
       ]);
 
-      const figmaData = figmaRes.status === "fulfilled" && figmaRes.value.ok
-        ? (await figmaRes.value.json()).data as DesignerActivity[] : null;
+      const figmaJson = figmaRes.status === "fulfilled" && figmaRes.value.ok
+        ? await figmaRes.value.json() : null;
+      const figmaData = figmaJson?.data as DesignerActivity[] | null ?? null;
+      const figmaFileData = (figmaJson?.files ?? []) as FigmaFileStats[];
       const asanaData = asanaRes.status === "fulfilled" && asanaRes.value.ok
         ? (await asanaRes.value.json()).data as AsanaTask[] : null;
       const completedData = completedRes.status === "fulfilled" && completedRes.value.ok
@@ -182,6 +201,7 @@ export default function DesignIntelDashboard() {
       setSource(prev => ({
         ...prev,
         figmaActivity: figmaData ?? prev.figmaActivity,
+        figmaFileStats: figmaFileData.length > 0 ? figmaFileData : prev.figmaFileStats,
         asanaTasks: asanaData ?? prev.asanaTasks,
         completedTasks: completedData ?? prev.completedTasks,
         snapshots: snapshotsData.length > 0 ? snapshotsData : prev.snapshots,
@@ -330,7 +350,7 @@ function DashboardShell({
   refreshing: boolean;
   onRefresh: () => void;
   activeTab: string;
-  setActiveTab: (t: "activity" | "tasks" | "pressure" | "workload" | "trends") => void;
+  setActiveTab: (t: "activity" | "tasks" | "pressure" | "workload" | "trends" | "flags") => void;
 }) {
   const hasLiveData = source.figmaFiles.some(f => f === "Live");
   const teamTasks = useMemo(() => (source.asanaTasks ?? []).filter(isTeamTask), [source.asanaTasks]);
@@ -447,6 +467,161 @@ function DashboardShell({
     return result;
   }, [completedTasks]);
 
+  // ── Operational Flags ─────────────────────────────────────────────────────
+  const flags = useMemo((): Flag[] => {
+    const f: Flag[] = [];
+    const today = new Date().toISOString().slice(0, 10);
+
+    // Overdue clustering by client
+    const overdueByClient: Record<string, number> = {};
+    for (const t of teamTasks) {
+      if (isOverdue(t)) {
+        for (const p of t.projects) {
+          if (!NON_CLIENT_PROJECTS.has(p.name)) {
+            overdueByClient[p.name] = (overdueByClient[p.name] ?? 0) + 1;
+          }
+        }
+      }
+    }
+    for (const [client, count] of Object.entries(overdueByClient)) {
+      if (count >= 3) {
+        f.push({ type: "danger", category: "Delivery",
+          title: `${client}: ${count} overdue tasks`,
+          detail: `This client has ${count} tasks past their due date. Risk of missed deadlines escalating.` });
+      }
+    }
+
+    // Bus factor — clients served by only 1 designer with 3+ tasks
+    const clientDesigners: Record<string, Set<string>> = {};
+    const clientTaskCount: Record<string, number> = {};
+    for (const t of teamTasks) {
+      if (!t.assignee) continue;
+      for (const p of t.projects) {
+        if (NON_CLIENT_PROJECTS.has(p.name)) continue;
+        clientDesigners[p.name] ??= new Set();
+        clientDesigners[p.name].add(t.assignee.name);
+        clientTaskCount[p.name] = (clientTaskCount[p.name] ?? 0) + 1;
+      }
+    }
+    const busRisk = Object.entries(clientDesigners)
+      .filter(([name, s]) => s.size === 1 && (clientTaskCount[name] ?? 0) >= 3)
+      .map(([name, s]) => ({ name, designer: Array.from(s)[0], tasks: clientTaskCount[name] }));
+    if (busRisk.length > 0) {
+      f.push({ type: "warn", category: "Risk",
+        title: `${busRisk.length} client${busRisk.length > 1 ? "s" : ""} covered by only one designer`,
+        detail: busRisk.map(r => `${r.name} → ${r.designer} (${r.tasks} tasks)`).join(" · ") + " — consider cross-coverage." });
+    }
+
+    // Zero-edit designers — active tasks but no Figma edits
+    const zeroEdit = workload.filter(d => d.active >= 5 && d.edits === 0);
+    if (zeroEdit.length > 0) {
+      f.push({ type: "warn", category: "Output",
+        title: `${zeroEdit.length} designer${zeroEdit.length > 1 ? "s" : ""} with tasks but no Figma edits`,
+        detail: zeroEdit.map(d => `${d.name} (${d.active} tasks, 0 edits)`).join(" · ") });
+    }
+
+    // High load imbalance
+    const overloaded = workload.filter(d => d.highLoad);
+    if (overloaded.length > 0) {
+      f.push({ type: "warn", category: "Workload",
+        title: `${overloaded.length} designer${overloaded.length > 1 ? "s" : ""} overloaded`,
+        detail: overloaded.map(d => `${d.name} (${d.active} tasks, ${d.edits} edits)`).join(" · ") });
+    }
+
+    // Velocity drop
+    if (deliveryMetrics.lastWeek > 0 && deliveryMetrics.thisWeek < deliveryMetrics.lastWeek * 0.5) {
+      f.push({ type: "warn", category: "Velocity",
+        title: `Output dropped ${Math.round((1 - deliveryMetrics.thisWeek / deliveryMetrics.lastWeek) * 100)}% vs last week`,
+        detail: `${deliveryMetrics.thisWeek} tasks completed this week vs ${deliveryMetrics.lastWeek} last week.` });
+    } else if (deliveryMetrics.thisWeek > deliveryMetrics.lastWeek * 1.5 && deliveryMetrics.thisWeek > 3) {
+      f.push({ type: "ok", category: "Velocity",
+        title: `Output up ${Math.round((deliveryMetrics.thisWeek / Math.max(deliveryMetrics.lastWeek, 1) - 1) * 100)}% vs last week`,
+        detail: `${deliveryMetrics.thisWeek} tasks completed this week vs ${deliveryMetrics.lastWeek} last week.` });
+    }
+
+    // Stale overdue — 14+ days past due
+    const stale = teamTasks.filter(t => {
+      if (!t.due_on || t.completed) return false;
+      const days = (new Date(today).getTime() - new Date(t.due_on).getTime()) / (1000 * 60 * 60 * 24);
+      return days >= 14;
+    });
+    if (stale.length > 0) {
+      f.push({ type: "danger", category: "Stale",
+        title: `${stale.length} task${stale.length > 1 ? "s" : ""} overdue by 14+ days`,
+        detail: stale.slice(0, 5).map(t => `"${t.name}" (due ${t.due_on}) — ${t.assignee?.name ?? "Unassigned"}`).join(" · ") + (stale.length > 5 ? ` +${stale.length - 5} more` : "") });
+    }
+
+    // Client with no Figma activity
+    const clientsNoFigma = clientPressure.filter(c => c.matchedEdits === 0 && c.tasks >= 3);
+    if (clientsNoFigma.length > 0) {
+      f.push({ type: "info", category: "Coverage",
+        title: `${clientsNoFigma.length} client${clientsNoFigma.length > 1 ? "s" : ""} with tasks but no Figma edits`,
+        detail: clientsNoFigma.map(c => `${c.name} (${c.tasks} tasks)`).join(" · ") });
+    }
+
+    if (f.length === 0) {
+      f.push({ type: "ok", category: "Status",
+        title: "All clear — no flags this period",
+        detail: "No overdue clustering, workload imbalances, or coverage gaps detected." });
+    }
+
+    return f;
+  }, [teamTasks, workload, clientPressure, deliveryMetrics]);
+
+  // ── Overdue × Figma Activity Overlay ───────────────────────────────────────
+  const overdueOverlay = useMemo(() => {
+    const overdueTasks = teamTasks.filter(isOverdue);
+    return overdueTasks.map(t => {
+      const figmaName = toFigmaName(t.assignee?.name ?? "");
+      const figmaDesigner = teamFigma.find(d => d.name === figmaName);
+      // Check if this designer has Figma activity on the same client project
+      const taskClients = t.projects.filter(p => !NON_CLIENT_PROJECTS.has(p.name)).map(p => p.name);
+      const matchedProjects = figmaDesigner?.projects.filter(fp =>
+        taskClients.some(tc => fp.toLowerCase().includes(tc.toLowerCase()) || tc.toLowerCase().includes(fp.toLowerCase()))
+      ) ?? [];
+      return {
+        task: t.name,
+        assignee: t.assignee?.name ?? "Unassigned",
+        figmaName,
+        dueDate: t.due_on ?? "—",
+        clients: taskClients,
+        figmaEdits: figmaDesigner?.edits ?? 0,
+        hasMatchedActivity: matchedProjects.length > 0,
+        matchedProjects,
+        type: t.custom_fields.find(f => f.name.toLowerCase() === "type of creative")?.display_value ?? null,
+      };
+    }).sort((a, b) => (b.hasMatchedActivity ? 1 : 0) - (a.hasMatchedActivity ? 1 : 0) || b.figmaEdits - a.figmaEdits);
+  }, [teamTasks, teamFigma]);
+
+  // ── Creative Type Breakdown ────────────────────────────────────────────────
+  const creativeTypes = useMemo(() => {
+    const typeMap: Record<string, { total: number; overdue: number; completed: number; designers: Set<string> }> = {};
+    const allTasks = [...teamTasks, ...completedTasks.filter(t => isTeamTask(t))];
+    const seen = new Set<string>();
+    for (const t of allTasks) {
+      if (seen.has(t.gid)) continue;
+      seen.add(t.gid);
+      const tp = t.custom_fields.find(f => f.name.toLowerCase() === "type of creative")?.display_value ?? "Other";
+      typeMap[tp] ??= { total: 0, overdue: 0, completed: 0, designers: new Set() };
+      typeMap[tp].total++;
+      if (isOverdue(t)) typeMap[tp].overdue++;
+      if (t.completed) typeMap[tp].completed++;
+      if (t.assignee) typeMap[tp].designers.add(t.assignee.name);
+    }
+    return Object.entries(typeMap)
+      .map(([type, s]) => ({ type, ...s, designerCount: s.designers.size }))
+      .sort((a, b) => b.total - a.total);
+  }, [teamTasks, completedTasks]);
+
+  // ── File Intelligence (from sync data) ─────────────────────────────────────
+  const hotFiles = useMemo(() => {
+    return source.figmaFileStats
+      .filter(f => f.edits > 0 || f.comments > 0)
+      .map(f => ({ ...f, heat: f.edits * 3 + f.comments }))
+      .sort((a, b) => b.heat - a.heat)
+      .slice(0, 20);
+  }, [source.figmaFileStats]);
+
   const maxPressure = clientPressure.length ? Math.max(...clientPressure.map(c => c.pressureScore)) : 1;
 
   return (
@@ -493,6 +668,7 @@ function DashboardShell({
             { id: "pressure", label: "Client Pressure", icon: "▲" },
             { id: "workload", label: "Workload", icon: "⊞" },
             { id: "trends", label: "Trends", icon: "◈" },
+            { id: "flags", label: `Flags${flags.length > 0 && flags[0].type !== "ok" ? ` (${flags.length})` : ""}`, icon: "⚑" },
           ] as const).map(item => (
             <button key={item.id} onClick={() => setActiveTab(item.id)} style={{
               display: "flex", alignItems: "center", gap: 8,
@@ -552,6 +728,7 @@ function DashboardShell({
             <Tab label="Client Pressure" active={activeTab === "pressure"} onClick={() => setActiveTab("pressure")} />
             <Tab label="Workload" active={activeTab === "workload"} onClick={() => setActiveTab("workload")} />
             <Tab label="Trends" active={activeTab === "trends"} onClick={() => setActiveTab("trends")} />
+            <Tab label={`Flags${flags.length > 0 && flags[0].type !== "ok" ? ` (${flags.length})` : ""}`} active={activeTab === "flags"} onClick={() => setActiveTab("flags")} />
           </div>
           <button onClick={onRefresh} disabled={refreshing} style={{
             background: BLUE, color: "#fff", border: "none", borderRadius: 6,
@@ -649,6 +826,7 @@ function DashboardShell({
 
           {/* ── Activity Tab ── */}
           {activeTab === "activity" && (
+            <div>
             <div style={{ background: SURFACE, borderRadius: 8, border: `1px solid ${DIVIDER}`, overflow: "hidden" }}>
               <div style={{
                 display: "grid", gridTemplateColumns: "40px 1fr 80px 80px 80px 64px",
@@ -687,6 +865,42 @@ function DashboardShell({
                   }}>{d.score}</div>
                 </div>
               ))}
+            </div>
+
+            {/* File Intelligence */}
+            {hotFiles.length > 0 && (
+              <div style={{ background: SURFACE, borderRadius: 8, border: `1px solid ${DIVIDER}`, overflow: "hidden", marginTop: 16 }}>
+                <div style={{ padding: "12px 16px", borderBottom: `1px solid ${DIVIDER}` }}>
+                  <div style={{ fontSize: 12, fontWeight: 600, color: T2 }}>Hottest files</div>
+                  <div style={{ fontSize: 11, color: T3, marginTop: 2 }}>Ranked by heat score (edits ×3 + comments)</div>
+                </div>
+                <div style={{
+                  display: "grid", gridTemplateColumns: "2fr 1.2fr 64px 64px 64px 60px",
+                  padding: "8px 16px", fontSize: 11, fontWeight: 500, color: T3,
+                  borderBottom: `1px solid ${DIVIDER}`,
+                }}>
+                  <span>File</span><span>Client</span>
+                  <span style={{ textAlign: "right" }}>Edits</span>
+                  <span style={{ textAlign: "right" }}>Comments</span>
+                  <span style={{ textAlign: "right" }}>Heat</span>
+                  <span style={{ textAlign: "right" }}>Team</span>
+                </div>
+                {hotFiles.slice(0, 12).map((f, i) => (
+                  <div key={f.name} style={{
+                    display: "grid", gridTemplateColumns: "2fr 1.2fr 64px 64px 64px 60px",
+                    padding: "8px 16px", alignItems: "center",
+                    borderBottom: i < Math.min(hotFiles.length, 12) - 1 ? `1px solid ${DIVIDER}` : "none",
+                  }}>
+                    <div style={{ fontSize: 12, fontWeight: 500, color: T1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", paddingRight: 8 }}>{f.name}</div>
+                    <div style={{ fontSize: 11, color: T3, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{f.project}</div>
+                    <div style={{ textAlign: "right", fontSize: 12, color: T1 }}>{f.edits}</div>
+                    <div style={{ textAlign: "right", fontSize: 12, color: T2 }}>{f.comments}</div>
+                    <div style={{ textAlign: "right", fontSize: 12, fontWeight: 600, color: i === 0 ? BLUE : ORANGE }}>{f.heat}</div>
+                    <div style={{ textAlign: "right", fontSize: 11, color: T3 }}>{f.designers.length}</div>
+                  </div>
+                ))}
+              </div>
+            )}
             </div>
           )}
 
@@ -752,6 +966,34 @@ function DashboardShell({
                 ))}
               </div>
             </div>
+
+            {/* Creative Type Breakdown */}
+            {creativeTypes.length > 0 && creativeTypes[0].type !== "Other" && (
+              <div style={{ background: SURFACE, borderRadius: 8, border: `1px solid ${DIVIDER}`, padding: 16 }}>
+                <div style={{ fontSize: 12, fontWeight: 600, color: T2, marginBottom: 12 }}>Creative type breakdown</div>
+                <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+                  {creativeTypes.filter(t => t.type !== "Other").map(t => {
+                    const pct = creativeTypes[0].total > 0 ? Math.round((t.total / creativeTypes[0].total) * 100) : 0;
+                    return (
+                      <div key={t.type} style={{ flex: "1 1 180px", minWidth: 160, background: ELEVATED, borderRadius: 6, padding: "10px 12px" }}>
+                        <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 4 }}>
+                          <span style={{ fontSize: 12, fontWeight: 500, color: T1 }}>{t.type}</span>
+                          <span style={{ fontSize: 11, color: T3 }}>{t.total}</span>
+                        </div>
+                        <div style={{ height: 3, background: DIVIDER, borderRadius: 2, marginBottom: 6 }}>
+                          <div style={{ width: `${pct}%`, height: "100%", background: BLUE, borderRadius: 2 }} />
+                        </div>
+                        <div style={{ display: "flex", gap: 8, fontSize: 10 }}>
+                          {t.overdue > 0 && <span style={{ color: RED, fontWeight: 600 }}>{t.overdue} overdue</span>}
+                          {t.completed > 0 && <span style={{ color: GREEN }}>{t.completed} done</span>}
+                          <span style={{ color: T3 }}>{t.designerCount} designer{t.designerCount !== 1 ? "s" : ""}</span>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
             </div>
           )}
 
@@ -934,6 +1176,75 @@ function DashboardShell({
                         </LineChart>
                       </ResponsiveContainer>
                     </div>
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* ── Flags Tab ── */}
+          {activeTab === "flags" && (
+            <div>
+              {/* Flags grid */}
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 24 }}>
+                {flags.map((flag, i) => {
+                  const colors = {
+                    danger: { bg: "rgba(242,72,34,0.08)", border: "rgba(242,72,34,0.3)", label: RED, badge: "rgba(242,72,34,0.15)" },
+                    warn: { bg: "rgba(255,166,41,0.08)", border: "rgba(255,166,41,0.3)", label: ORANGE, badge: "rgba(255,166,41,0.15)" },
+                    ok: { bg: "rgba(20,174,92,0.08)", border: "rgba(20,174,92,0.3)", label: GREEN, badge: "rgba(20,174,92,0.15)" },
+                    info: { bg: "rgba(13,153,255,0.08)", border: "rgba(13,153,255,0.3)", label: BLUE, badge: "rgba(13,153,255,0.15)" },
+                  }[flag.type];
+                  const typeLabel = { danger: "Alert", warn: "Watch", ok: "Signal", info: "Info" }[flag.type];
+                  return (
+                    <div key={i} style={{ background: colors.bg, border: `1px solid ${colors.border}`, borderRadius: 8, padding: 16 }}>
+                      <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
+                        <span style={{ fontSize: 10, fontWeight: 700, letterSpacing: "0.08em", textTransform: "uppercase", color: colors.label, background: colors.badge, padding: "2px 8px", borderRadius: 4 }}>{typeLabel}</span>
+                        <span style={{ fontSize: 11, color: T3 }}>{flag.category}</span>
+                      </div>
+                      <div style={{ fontSize: 13, fontWeight: 600, color: T1, marginBottom: 6 }}>{flag.title}</div>
+                      <div style={{ fontSize: 12, color: T2, lineHeight: 1.6 }}>{flag.detail}</div>
+                    </div>
+                  );
+                })}
+              </div>
+
+              {/* Overdue × Figma Activity overlay */}
+              {overdueOverlay.length > 0 && (
+                <div>
+                  <div style={{ fontSize: 13, fontWeight: 600, color: T1, marginBottom: 4 }}>Overdue × Figma Activity</div>
+                  <div style={{ fontSize: 11, color: T3, marginBottom: 12 }}>Overdue tasks cross-referenced with designer Figma activity on that client — "In Figma" means work exists but may not have shipped.</div>
+                  <div style={{ background: SURFACE, borderRadius: 8, border: `1px solid ${DIVIDER}`, overflow: "hidden" }}>
+                    <div style={{
+                      display: "grid", gridTemplateColumns: "2fr 1fr 80px 80px 90px",
+                      padding: "10px 16px", fontSize: 11, fontWeight: 500, color: T3,
+                      borderBottom: `1px solid ${DIVIDER}`,
+                    }}>
+                      <span>Task</span><span>Assignee</span>
+                      <span style={{ textAlign: "right" }}>Due</span>
+                      <span style={{ textAlign: "right" }}>Edits</span>
+                      <span style={{ textAlign: "right" }}>Status</span>
+                    </div>
+                    {overdueOverlay.map((t, i) => (
+                      <div key={i} style={{
+                        display: "grid", gridTemplateColumns: "2fr 1fr 80px 80px 90px",
+                        padding: "10px 16px", alignItems: "center",
+                        borderBottom: i < overdueOverlay.length - 1 ? `1px solid ${DIVIDER}` : "none",
+                      }}>
+                        <div>
+                          <div style={{ fontSize: 12, fontWeight: 500, color: T1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{t.task}</div>
+                          {t.type && <div style={{ fontSize: 10, color: T3, marginTop: 1 }}>{t.type}</div>}
+                        </div>
+                        <div style={{ fontSize: 12, color: T2 }}>{t.assignee}</div>
+                        <div style={{ textAlign: "right", fontSize: 11, fontWeight: 600, color: RED }}>{t.dueDate}</div>
+                        <div style={{ textAlign: "right", fontSize: 12, color: t.figmaEdits > 0 ? GREEN : T4 }}>{t.figmaEdits > 0 ? t.figmaEdits : "—"}</div>
+                        <div style={{ textAlign: "right" }}>
+                          {t.hasMatchedActivity
+                            ? <Badge text="In Figma" color={ORANGE} bg="rgba(255,166,41,0.12)" />
+                            : <Badge text="No activity" color={RED} bg="rgba(242,72,34,0.12)" />
+                          }
+                        </div>
+                      </div>
+                    ))}
                   </div>
                 </div>
               )}

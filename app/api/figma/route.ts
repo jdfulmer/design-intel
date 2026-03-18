@@ -8,8 +8,18 @@ import type { FigmaDesignerActivity } from "@/lib/figma";
 
 export const runtime = "nodejs";
 
+interface FigmaFileStats {
+  name: string;
+  project: string;
+  edits: number;
+  comments: number;
+  designers: string[];
+  lastModified: string;
+}
+
 interface SyncResult {
   data: FigmaDesignerActivity[];
+  files?: FigmaFileStats[];
   syncedAt: string;
   startTime: number;
   endTime: number;
@@ -24,6 +34,7 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
   if (cached) {
     return NextResponse.json({
       data: cached.data,
+      files: cached.files ?? [],
       source: "cache",
       syncedAt: cached.syncedAt,
     });

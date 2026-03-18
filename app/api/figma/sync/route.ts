@@ -47,11 +47,14 @@ interface SyncState {
   filesProcessed: number;
   // Accumulated designer activity
   designers: Record<string, { edits: number; comments: number; files: string[]; projects: string[] }>;
+  // Accumulated per-file stats
+  fileStats: Record<string, { project: string; edits: number; comments: number; designers: string[]; lastModified: string }>;
   updatedAt: string;
 }
 
 interface SyncResult {
   data: FigmaDesignerActivity[];
+  files: Array<{ name: string; project: string; edits: number; comments: number; designers: string[]; lastModified: string }>;
   syncedAt: string;
   startTime: number;
   endTime: number;
@@ -93,6 +96,7 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
         fileIndex: [],
         filesProcessed: 0,
         designers: {},
+        fileStats: {},
         updatedAt: new Date().toISOString(),
       };
 
@@ -172,6 +176,12 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
       const chunk = state.fileIndex.slice(start, end);
 
       for (const file of chunk) {
+        // Initialize per-file stats
+        if (!state.fileStats[file.name]) {
+          state.fileStats[file.name] = { project: file.projectName, edits: 0, comments: 0, designers: [], lastModified: file.last_modified };
+        }
+        const fs = state.fileStats[file.name];
+
         const versions = await fetchFileVersions(file.key);
         await delay(DELAY_MS);
 
@@ -186,6 +196,8 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
             d.edits++;
             if (!d.files.includes(file.name)) d.files.push(file.name);
             if (!d.projects.includes(file.projectName)) d.projects.push(file.projectName);
+            fs.edits++;
+            if (!fs.designers.includes(name)) fs.designers.push(name);
           }
         }
 
@@ -203,6 +215,8 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
             d.comments++;
             if (!d.files.includes(file.name)) d.files.push(file.name);
             if (!d.projects.includes(file.projectName)) d.projects.push(file.projectName);
+            fs.comments++;
+            if (!fs.designers.includes(name)) fs.designers.push(name);
           }
         }
       }
@@ -217,8 +231,13 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
       const activity: FigmaDesignerActivity[] = Object.entries(state.designers)
         .map(([name, d]) => ({ name, ...d }));
 
+      const fileStatsArr = Object.entries(state.fileStats)
+        .map(([name, f]) => ({ name, ...f }))
+        .sort((a, b) => (b.edits * 3 + b.comments) - (a.edits * 3 + a.comments));
+
       await cacheSet("figma:latest-sync", {
         data: activity,
+        files: fileStatsArr,
         syncedAt: new Date().toISOString(),
         startTime: state.startTime,
         endTime: state.endTime,
