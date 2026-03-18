@@ -7,7 +7,7 @@ import {
   LineChart, Line,
 } from "recharts";
 import {
-  avgCycleTime, onTimeRate, throughput, healthScore, topAlert,
+  avgCycleTime, onTimeRate, throughput, topAlert,
   type WeeklySnapshot,
 } from "@/lib/metrics";
 
@@ -473,14 +473,12 @@ function DashboardShell({
     const lastWeek = completedTasks.filter(t => t.completed_at && new Date(t.completed_at) >= twoWeeksAgo && new Date(t.completed_at) < weekAgo).length;
     const weekDelta = thisWeek - lastWeek;
 
-    const health = healthScore(onTime, avgCycle, thisWeek, lastWeek);
-
     // Top alert
     const highLoad = workload.filter(d => d.highLoad).map(d => d.name);
     const highPressure = clientPressure.filter(c => c.pressureScore >= 15).map(c => c.name);
     const alert = topAlert(taskStats.overdue, highLoad, highPressure);
 
-    return { onTime, avgCycle, total, thisWeek, lastWeek, weekDelta, health, alert };
+    return { onTime, avgCycle, total, thisWeek, lastWeek, weekDelta, alert };
   }, [completedTasks, workload, clientPressure, taskStats.overdue]);
 
   // Per-designer cycle time for workload tab
@@ -903,78 +901,6 @@ function DashboardShell({
             }}>
               {refreshing ? "Syncing…" : "Refresh data"}
             </button>
-          </div>
-        </div>
-
-        {/* ── Executive Summary Card ── */}
-        <div style={{
-          margin: "16px 24px 0", padding: 16,
-          background: SURFACE, borderRadius: 8, border: `1px solid ${DIVIDER}`,
-          display: "flex", gap: 24, alignItems: "center", flexWrap: "wrap",
-        }}>
-          {/* Health Score */}
-          <div style={{ display: "flex", alignItems: "center", gap: 12, minWidth: 120 }}>
-            <div style={{
-              width: 48, height: 48, borderRadius: 24,
-              background: deliveryMetrics.health >= 70 ? "rgba(20,174,92,0.15)" : deliveryMetrics.health >= 40 ? "rgba(255,166,41,0.15)" : "rgba(242,72,34,0.15)",
-              display: "flex", alignItems: "center", justifyContent: "center",
-              fontSize: 18, fontWeight: 700,
-              color: deliveryMetrics.health >= 70 ? GREEN : deliveryMetrics.health >= 40 ? ORANGE : RED,
-            }}>
-              {deliveryMetrics.health}
-            </div>
-            <div>
-              <div style={{ fontSize: 11, color: T3, fontWeight: 500 }}>Health Score</div>
-              <div style={{ fontSize: 12, color: T2, fontWeight: 500 }}>
-                {deliveryMetrics.health >= 70 ? "Healthy" : deliveryMetrics.health >= 40 ? "Needs attention" : "At risk"}
-              </div>
-            </div>
-          </div>
-
-          <div style={{ width: 1, height: 36, background: DIVIDER }} />
-
-          {/* On-time % */}
-          <div style={{ minWidth: 80 }}>
-            <div style={{ fontSize: 11, color: T3, fontWeight: 500 }}>On-time</div>
-            <div style={{ fontSize: 20, fontWeight: 600, color: T1 }}>
-              {deliveryMetrics.onTime !== null ? `${Math.round(deliveryMetrics.onTime * 100)}%` : "—"}
-            </div>
-          </div>
-
-          {/* Avg Cycle Time */}
-          <div style={{ minWidth: 80 }}>
-            <div style={{ fontSize: 11, color: T3, fontWeight: 500 }}>Avg cycle</div>
-            <div style={{ fontSize: 20, fontWeight: 600, color: T1 }}>
-              {deliveryMetrics.avgCycle !== null ? `${deliveryMetrics.avgCycle}d` : "—"}
-            </div>
-          </div>
-
-          {/* This week vs last */}
-          <div style={{ minWidth: 100 }}>
-            <div style={{ fontSize: 11, color: T3, fontWeight: 500 }}>This week</div>
-            <div style={{ display: "flex", alignItems: "baseline", gap: 6 }}>
-              <span style={{ fontSize: 20, fontWeight: 600, color: T1 }}>{deliveryMetrics.thisWeek}</span>
-              <span style={{
-                fontSize: 12, fontWeight: 600,
-                color: deliveryMetrics.weekDelta > 0 ? GREEN : deliveryMetrics.weekDelta < 0 ? RED : T3,
-              }}>
-                {deliveryMetrics.weekDelta > 0 ? `▲ ${deliveryMetrics.weekDelta}` : deliveryMetrics.weekDelta < 0 ? `▼ ${Math.abs(deliveryMetrics.weekDelta)}` : "—"}
-              </span>
-              <span style={{ fontSize: 11, color: T3 }}>vs last</span>
-            </div>
-          </div>
-
-          <div style={{ width: 1, height: 36, background: DIVIDER }} />
-
-          {/* Top Alert */}
-          <div style={{ flex: 1, minWidth: 140 }}>
-            <div style={{ fontSize: 11, color: T3, fontWeight: 500, marginBottom: 2 }}>Top alert</div>
-            <div style={{
-              fontSize: 12, fontWeight: 600,
-              color: deliveryMetrics.alert.severity === "red" ? RED : deliveryMetrics.alert.severity === "orange" ? ORANGE : GREEN,
-            }}>
-              {deliveryMetrics.alert.severity !== "green" && "⚠ "}{deliveryMetrics.alert.text}
-            </div>
           </div>
         </div>
 
