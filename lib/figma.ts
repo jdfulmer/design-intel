@@ -36,8 +36,8 @@ export interface FigmaDesignerActivity {
 }
 
 const FIGMA_API = "https://api.figma.com/v1";
-const REQUEST_DELAY_MS = 500;
-const MAX_FILES = 25;
+const REQUEST_DELAY_MS = 3200; // ~18 requests/min — stays under Figma's 20/min limit
+const MAX_FILES = 50;
 
 function getToken(): string {
   const token = process.env.FIGMA_PAT;

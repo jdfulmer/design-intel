@@ -4,9 +4,11 @@
 import { kv } from "@vercel/kv";
 
 const TTL_SECONDS = 60 * 60; // 1 hour
+const SYNC_TTL_SECONDS = 60 * 60 * 24; // 24 hours for sync data
 
 export type CacheKey =
   | `figma:team-activity:${string}`  // figma:team-activity:1234567890:1234567890
+  | "figma:latest-sync"             // latest sync result from /api/figma/sync
   | `asana:tasks:${string}`          // asana:tasks:all or asana:tasks:2026-03-04
   | "cache:timestamps";
 
@@ -31,8 +33,9 @@ export async function cacheGet<T>(key: CacheKey): Promise<T | null> {
 
 export async function cacheSet<T>(key: CacheKey, value: T): Promise<void> {
   if (!isKVConfigured()) return;
+  const ttl = key === "figma:latest-sync" ? SYNC_TTL_SECONDS : TTL_SECONDS;
   try {
-    await kv.set(key, value, { ex: TTL_SECONDS });
+    await kv.set(key, value, { ex: ttl });
   } catch (e) {
     console.warn(`[cache] set failed for ${key}:`, e);
   }
