@@ -15,8 +15,14 @@ import {
   fetchFileComments,
   type FigmaDesignerActivity,
 } from "@/lib/figma";
-import { cacheGet, cacheSet, setTimestamp } from "@/lib/cache";
+import { cacheGet, cacheSet, setTimestamp, snapshotCacheKey } from "@/lib/cache";
 import { requireApiSecret } from "@/lib/auth";
+import { fetchAsanaTasks } from "@/lib/asana";
+import type { AsanaTask } from "@/lib/asana";
+import {
+  avgCycleTime, onTimeRate, getMonday, formatDate,
+  type WeeklySnapshot,
+} from "@/lib/metrics";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
@@ -220,13 +226,21 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
       await setTimestamp("figma");
       await cacheSet(STATE_KEY, state);
 
+      // ── Generate weekly snapshot on sync completion ──
       if (isDone) {
+        try {
+          await generateWeeklySnapshot(activity);
+        } catch (e) {
+          console.warn("[sync] snapshot generation failed:", e);
+        }
+
         return NextResponse.json({
           status: "complete",
           designers: activity.length,
           filesProcessed: state.filesProcessed,
           totalFiles: state.fileIndex.length,
           syncedAt: new Date().toISOString(),
+          snapshotGenerated: true,
         });
       }
 
@@ -246,4 +260,135 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
     console.error("[/api/figma/sync]", message);
     return NextResponse.json({ error: message }, { status: 500 });
   }
+}
+
+// ── Snapshot Generation ────────────────────────────────────────────────────────
+
+const NON_CLIENT_PROJECTS = new Set(["Creative Intake", "Creative Tasks", "General Tasks"]);
+
+async function generateWeeklySnapshot(
+  figmaActivity: FigmaDesignerActivity[]
+): Promise<void> {
+  const monday = formatDate(getMonday(new Date()));
+  const key = snapshotCacheKey(monday);
+
+  // Fetch completed tasks from last 30 days
+  const since = new Date();
+  since.setDate(since.getDate() - 30);
+  let completedTasks: AsanaTask[] = [];
+  let openTasks: AsanaTask[] = [];
+
+  try {
+    const [completed, open] = await Promise.all([
+      fetchAsanaTasks({ completedSince: since.toISOString() }),
+      fetchAsanaTasks({}),
+    ]);
+    completedTasks = completed.filter((t) => t.completed);
+    openTasks = open.filter((t) => !t.completed);
+  } catch (e) {
+    console.warn("[snapshot] Asana fetch failed, generating partial snapshot:", e);
+  }
+
+  const allTasks = [...openTasks, ...completedTasks];
+  const today = new Date().toISOString().slice(0, 10);
+
+  // Team-level metrics
+  const totalEdits = figmaActivity.reduce((s, d) => s + d.edits, 0);
+  const totalComments = figmaActivity.reduce((s, d) => s + d.comments, 0);
+  const overdueCount = openTasks.filter(
+    (t) => t.due_on && !t.completed && t.due_on < today
+  ).length;
+
+  // Per-designer metrics
+  const designerMap: Record<
+    string,
+    { edits: number; comments: number; tasksCompleted: number; tasksActive: number; cycleTasks: Array<{ created_at: string; completed_at: string | null }> }
+  > = {};
+
+  for (const d of figmaActivity) {
+    designerMap[d.name] = {
+      edits: d.edits,
+      comments: d.comments,
+      tasksCompleted: 0,
+      tasksActive: 0,
+      cycleTasks: [],
+    };
+  }
+
+  // We don't have a reliable Asana→Figma name mapping here on the server,
+  // so designer task stats are aggregated by Asana assignee name
+  const assigneeStats: Record<string, { completed: number; active: number; cycleTasks: Array<{ created_at: string; completed_at: string | null }> }> = {};
+  for (const t of allTasks) {
+    const name = t.assignee?.name ?? "Unassigned";
+    assigneeStats[name] ??= { completed: 0, active: 0, cycleTasks: [] };
+    if (t.completed) {
+      assigneeStats[name].completed++;
+      assigneeStats[name].cycleTasks.push({ created_at: t.created_at, completed_at: t.completed_at });
+    } else {
+      assigneeStats[name].active++;
+    }
+  }
+
+  // Per-client metrics
+  const clientMap: Record<string, { tasks: number; completed: number; overdue: number }> = {};
+  for (const t of allTasks) {
+    for (const p of t.projects) {
+      if (NON_CLIENT_PROJECTS.has(p.name)) continue;
+      clientMap[p.name] ??= { tasks: 0, completed: 0, overdue: 0 };
+      clientMap[p.name].tasks++;
+      if (t.completed) clientMap[p.name].completed++;
+      if (t.due_on && !t.completed && t.due_on < today) clientMap[p.name].overdue++;
+    }
+  }
+
+  // Match client names to Figma project edits
+  const projectEdits: Record<string, number> = {};
+  for (const d of figmaActivity) {
+    for (const p of d.projects) {
+      projectEdits[p] = (projectEdits[p] ?? 0) + d.edits;
+    }
+  }
+
+  const snapshot: WeeklySnapshot = {
+    weekOf: monday,
+    generatedAt: new Date().toISOString(),
+    team: {
+      totalEdits,
+      totalComments,
+      tasksCompleted: completedTasks.length,
+      tasksCreated: allTasks.filter(
+        (t) => new Date(t.created_at) >= since
+      ).length,
+      avgCycleTimeDays: avgCycleTime(completedTasks),
+      onTimeRate: onTimeRate(completedTasks),
+      overdueCount,
+      activeTaskCount: openTasks.length,
+    },
+    designers: Object.entries(assigneeStats)
+      .map(([name, s]) => ({
+        name,
+        edits: designerMap[name]?.edits ?? 0,
+        comments: designerMap[name]?.comments ?? 0,
+        tasksCompleted: s.completed,
+        tasksActive: s.active,
+        avgCycleTimeDays: avgCycleTime(s.cycleTasks),
+      }))
+      .sort((a, b) => b.tasksCompleted - a.tasksCompleted),
+    clients: Object.entries(clientMap)
+      .map(([name, c]) => {
+        const matched = Object.entries(projectEdits)
+          .filter(
+            ([fp]) =>
+              fp.toLowerCase().includes(name.toLowerCase()) ||
+              name.toLowerCase().includes(fp.toLowerCase())
+          )
+          .reduce((sum, [, v]) => sum + v, 0);
+        return { name, ...c, edits: matched };
+      })
+      .sort((a, b) => b.tasks - a.tasks)
+      .slice(0, 15),
+  };
+
+  await cacheSet(key, snapshot);
+  console.log(`[snapshot] Generated weekly snapshot for ${monday}`);
 }

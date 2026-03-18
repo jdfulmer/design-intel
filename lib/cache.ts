@@ -5,11 +5,15 @@ import { kv } from "@vercel/kv";
 
 const TTL_SECONDS = 60 * 60; // 1 hour
 const SYNC_TTL_SECONDS = 60 * 60 * 24; // 24 hours for sync data
+const SNAPSHOT_TTL_SECONDS = 60 * 60 * 24 * 90; // 90 days for weekly snapshots
+const COMPLETED_TTL_SECONDS = 60 * 60 * 6; // 6 hours for completed tasks
 
 export type CacheKey =
   | `figma:team-activity:${string}`  // figma:team-activity:1234567890:1234567890
   | "figma:latest-sync"             // latest sync result from /api/figma/sync
   | `asana:tasks:${string}`          // asana:tasks:all or asana:tasks:2026-03-04
+  | `asana:completed:${string}`      // asana:completed:2026-03-18
+  | `snapshot:week:${string}`        // snapshot:week:2026-03-16 (Monday date)
   | "cache:timestamps";
 
 export interface CacheTimestamps {
@@ -33,7 +37,10 @@ export async function cacheGet<T>(key: CacheKey): Promise<T | null> {
 
 export async function cacheSet<T>(key: CacheKey, value: T): Promise<void> {
   if (!isKVConfigured()) return;
-  const ttl = key === "figma:latest-sync" ? SYNC_TTL_SECONDS : TTL_SECONDS;
+  let ttl = TTL_SECONDS;
+  if (key === "figma:latest-sync") ttl = SYNC_TTL_SECONDS;
+  else if (key.startsWith("snapshot:week:")) ttl = SNAPSHOT_TTL_SECONDS;
+  else if (key.startsWith("asana:completed:")) ttl = COMPLETED_TTL_SECONDS;
   try {
     await kv.set(key, value, { ex: ttl });
   } catch (e) {
@@ -72,4 +79,44 @@ export function figmaCacheKey(startTime: number, endTime: number): CacheKey {
 /** Build a cache key for Asana tasks (keyed by modified_since date or "all") */
 export function asanaCacheKey(modifiedSince?: string): CacheKey {
   return `asana:tasks:${modifiedSince ?? "all"}`;
+}
+
+/** Build a cache key for completed Asana tasks */
+export function completedCacheKey(date: string): CacheKey {
+  return `asana:completed:${date}`;
+}
+
+/** Build a cache key for a weekly snapshot */
+export function snapshotCacheKey(monday: string): CacheKey {
+  return `snapshot:week:${monday}`;
+}
+
+/** Get the last N Monday dates as YYYY-MM-DD strings (most recent first) */
+export function getRecentMondays(count: number): string[] {
+  const now = new Date();
+  const day = now.getDay();
+  const diff = day === 0 ? 6 : day - 1;
+  const monday = new Date(now);
+  monday.setDate(monday.getDate() - diff);
+  monday.setHours(0, 0, 0, 0);
+
+  const result: string[] = [];
+  for (let i = 0; i < count; i++) {
+    const d = new Date(monday);
+    d.setDate(d.getDate() - i * 7);
+    result.push(d.toISOString().slice(0, 10));
+  }
+  return result;
+}
+
+/** Batch-get multiple cache keys at once (returns array in same order, null for misses) */
+export async function cacheGetMany<T>(keys: CacheKey[]): Promise<(T | null)[]> {
+  if (!isKVConfigured() || keys.length === 0) return keys.map(() => null);
+  try {
+    const results = await kv.mget<T[]>(...keys);
+    return results;
+  } catch (e) {
+    console.warn(`[cache] mget failed:`, e);
+    return keys.map(() => null);
+  }
 }

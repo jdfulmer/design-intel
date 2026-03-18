@@ -4,7 +4,12 @@
 import { useState, useEffect, useCallback, useMemo } from "react";
 import {
   BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell,
+  LineChart, Line,
 } from "recharts";
+import {
+  avgCycleTime, onTimeRate, throughput, healthScore, topAlert,
+  type WeeklySnapshot,
+} from "@/lib/metrics";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -22,6 +27,8 @@ interface AsanaTask {
   assignee: { gid: string; name: string } | null;
   due_on: string | null;
   completed: boolean;
+  completed_at: string | null;
+  created_at: string;
   projects: Array<{ gid: string; name: string }>;
   custom_fields: Array<{ name: string; display_value: string | null; number_value?: number | null }>;
 }
@@ -29,6 +36,8 @@ interface AsanaTask {
 interface DataSource {
   figmaActivity: DesignerActivity[] | null;
   asanaTasks: AsanaTask[] | null;
+  completedTasks: AsanaTask[] | null;
+  snapshots: WeeklySnapshot[];
   figmaFiles: string[];
   asanaFiles: string[];
   lastFetched: { figma: string | null; asana: string | null };
@@ -128,6 +137,7 @@ function initials(name: string): string {
 export default function DesignIntelDashboard() {
   const [source, setSource] = useState<DataSource>({
     figmaActivity: null, asanaTasks: null,
+    completedTasks: null, snapshots: [],
     figmaFiles: [], asanaFiles: [],
     lastFetched: { figma: null, asana: null },
     mode: "empty",
@@ -135,7 +145,7 @@ export default function DesignIntelDashboard() {
   const [loading, setLoading] = useState(true);
   const [apiError, setApiError] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
-  const [activeTab, setActiveTab] = useState<"activity" | "tasks" | "pressure" | "workload">("activity");
+  const [activeTab, setActiveTab] = useState<"activity" | "tasks" | "pressure" | "workload" | "trends">("activity");
 
   const fetchFromApi = useCallback(async (force = false) => {
     setRefreshing(true);
@@ -145,9 +155,11 @@ export default function DesignIntelDashboard() {
       const secret = process.env.NEXT_PUBLIC_API_SECRET;
       if (secret) headers["Authorization"] = `Bearer ${secret}`;
 
-      const [figmaRes, asanaRes, cacheRes] = await Promise.allSettled([
+      const [figmaRes, asanaRes, completedRes, snapshotsRes, cacheRes] = await Promise.allSettled([
         fetch(`/api/figma${force ? "?force=true" : ""}`, { headers }),
         fetch(`/api/asana${force ? "?force=true" : ""}`, { headers }),
+        fetch(`/api/asana?include_completed=30d${force ? "&force=true" : ""}`, { headers }),
+        fetch("/api/snapshots", { headers }),
         fetch("/api/cache", { headers }),
       ]);
 
@@ -155,6 +167,10 @@ export default function DesignIntelDashboard() {
         ? (await figmaRes.value.json()).data as DesignerActivity[] : null;
       const asanaData = asanaRes.status === "fulfilled" && asanaRes.value.ok
         ? (await asanaRes.value.json()).data as AsanaTask[] : null;
+      const completedData = completedRes.status === "fulfilled" && completedRes.value.ok
+        ? (await completedRes.value.json()).data as AsanaTask[] : null;
+      const snapshotsData = snapshotsRes.status === "fulfilled" && snapshotsRes.value.ok
+        ? (await snapshotsRes.value.json()).data as WeeklySnapshot[] : [];
       const cacheData = cacheRes.status === "fulfilled" && cacheRes.value.ok
         ? await cacheRes.value.json() : null;
 
@@ -167,6 +183,8 @@ export default function DesignIntelDashboard() {
         ...prev,
         figmaActivity: figmaData ?? prev.figmaActivity,
         asanaTasks: asanaData ?? prev.asanaTasks,
+        completedTasks: completedData ?? prev.completedTasks,
+        snapshots: snapshotsData.length > 0 ? snapshotsData : prev.snapshots,
         figmaFiles: figmaData ? ["Live"] : prev.figmaFiles,
         asanaFiles: asanaData ? ["Live"] : prev.asanaFiles,
         lastFetched: { figma: cacheData?.figma ?? null, asana: cacheData?.asana ?? null },
@@ -312,7 +330,7 @@ function DashboardShell({
   refreshing: boolean;
   onRefresh: () => void;
   activeTab: string;
-  setActiveTab: (t: "activity" | "tasks" | "pressure" | "workload") => void;
+  setActiveTab: (t: "activity" | "tasks" | "pressure" | "workload" | "trends") => void;
 }) {
   const hasLiveData = source.figmaFiles.some(f => f === "Live");
   const teamTasks = useMemo(() => (source.asanaTasks ?? []).filter(isTeamTask), [source.asanaTasks]);
@@ -388,6 +406,47 @@ function DashboardShell({
     }).filter(d => d.active > 0 || d.edits > 0).sort((a, b) => b.active - a.active);
   }, [teamTasks, teamFigma]);
 
+  // ── Delivery Metrics (V1) ──────────────────────────────────────────────────
+  const completedTasks = useMemo(() => source.completedTasks ?? [], [source.completedTasks]);
+
+  const deliveryMetrics = useMemo(() => {
+    const onTime = onTimeRate(completedTasks);
+    const avgCycle = avgCycleTime(completedTasks);
+    const total = throughput(completedTasks);
+
+    // This week vs last week
+    const now = new Date();
+    const weekAgo = new Date(now); weekAgo.setDate(weekAgo.getDate() - 7);
+    const twoWeeksAgo = new Date(now); twoWeeksAgo.setDate(twoWeeksAgo.getDate() - 14);
+    const thisWeek = completedTasks.filter(t => t.completed_at && new Date(t.completed_at) >= weekAgo).length;
+    const lastWeek = completedTasks.filter(t => t.completed_at && new Date(t.completed_at) >= twoWeeksAgo && new Date(t.completed_at) < weekAgo).length;
+    const weekDelta = thisWeek - lastWeek;
+
+    const health = healthScore(onTime, avgCycle, thisWeek, lastWeek);
+
+    // Top alert
+    const highLoad = workload.filter(d => d.highLoad).map(d => d.name);
+    const highPressure = clientPressure.filter(c => c.pressureScore >= 15).map(c => c.name);
+    const alert = topAlert(taskStats.overdue, highLoad, highPressure);
+
+    return { onTime, avgCycle, total, thisWeek, lastWeek, weekDelta, health, alert };
+  }, [completedTasks, workload, clientPressure, taskStats.overdue]);
+
+  // Per-designer cycle time for workload tab
+  const designerCycleTime = useMemo(() => {
+    const byAssignee: Record<string, Array<{ created_at: string; completed_at: string | null }>> = {};
+    for (const t of completedTasks) {
+      const name = t.assignee?.name ?? "Unassigned";
+      byAssignee[name] ??= [];
+      byAssignee[name].push({ created_at: t.created_at, completed_at: t.completed_at });
+    }
+    const result: Record<string, number | null> = {};
+    for (const [name, tasks] of Object.entries(byAssignee)) {
+      result[name] = avgCycleTime(tasks);
+    }
+    return result;
+  }, [completedTasks]);
+
   const maxPressure = clientPressure.length ? Math.max(...clientPressure.map(c => c.pressureScore)) : 1;
 
   return (
@@ -433,6 +492,7 @@ function DashboardShell({
             { id: "tasks", label: "Tasks", icon: "☐" },
             { id: "pressure", label: "Client Pressure", icon: "▲" },
             { id: "workload", label: "Workload", icon: "⊞" },
+            { id: "trends", label: "Trends", icon: "◈" },
           ] as const).map(item => (
             <button key={item.id} onClick={() => setActiveTab(item.id)} style={{
               display: "flex", alignItems: "center", gap: 8,
@@ -491,6 +551,7 @@ function DashboardShell({
             <Tab label="Tasks" active={activeTab === "tasks"} onClick={() => setActiveTab("tasks")} />
             <Tab label="Client Pressure" active={activeTab === "pressure"} onClick={() => setActiveTab("pressure")} />
             <Tab label="Workload" active={activeTab === "workload"} onClick={() => setActiveTab("workload")} />
+            <Tab label="Trends" active={activeTab === "trends"} onClick={() => setActiveTab("trends")} />
           </div>
           <button onClick={onRefresh} disabled={refreshing} style={{
             background: BLUE, color: "#fff", border: "none", borderRadius: 6,
@@ -499,6 +560,78 @@ function DashboardShell({
           }}>
             {refreshing ? "Syncing…" : "Refresh data"}
           </button>
+        </div>
+
+        {/* ── Executive Summary Card ── */}
+        <div style={{
+          margin: "16px 24px 0", padding: 16,
+          background: SURFACE, borderRadius: 8, border: `1px solid ${DIVIDER}`,
+          display: "flex", gap: 24, alignItems: "center", flexWrap: "wrap",
+        }}>
+          {/* Health Score */}
+          <div style={{ display: "flex", alignItems: "center", gap: 12, minWidth: 120 }}>
+            <div style={{
+              width: 48, height: 48, borderRadius: 24,
+              background: deliveryMetrics.health >= 70 ? "rgba(20,174,92,0.15)" : deliveryMetrics.health >= 40 ? "rgba(255,166,41,0.15)" : "rgba(242,72,34,0.15)",
+              display: "flex", alignItems: "center", justifyContent: "center",
+              fontSize: 18, fontWeight: 700,
+              color: deliveryMetrics.health >= 70 ? GREEN : deliveryMetrics.health >= 40 ? ORANGE : RED,
+            }}>
+              {deliveryMetrics.health}
+            </div>
+            <div>
+              <div style={{ fontSize: 11, color: T3, fontWeight: 500 }}>Health Score</div>
+              <div style={{ fontSize: 12, color: T2, fontWeight: 500 }}>
+                {deliveryMetrics.health >= 70 ? "Healthy" : deliveryMetrics.health >= 40 ? "Needs attention" : "At risk"}
+              </div>
+            </div>
+          </div>
+
+          <div style={{ width: 1, height: 36, background: DIVIDER }} />
+
+          {/* On-time % */}
+          <div style={{ minWidth: 80 }}>
+            <div style={{ fontSize: 11, color: T3, fontWeight: 500 }}>On-time</div>
+            <div style={{ fontSize: 20, fontWeight: 600, color: T1 }}>
+              {deliveryMetrics.onTime !== null ? `${Math.round(deliveryMetrics.onTime * 100)}%` : "—"}
+            </div>
+          </div>
+
+          {/* Avg Cycle Time */}
+          <div style={{ minWidth: 80 }}>
+            <div style={{ fontSize: 11, color: T3, fontWeight: 500 }}>Avg cycle</div>
+            <div style={{ fontSize: 20, fontWeight: 600, color: T1 }}>
+              {deliveryMetrics.avgCycle !== null ? `${deliveryMetrics.avgCycle}d` : "—"}
+            </div>
+          </div>
+
+          {/* This week vs last */}
+          <div style={{ minWidth: 100 }}>
+            <div style={{ fontSize: 11, color: T3, fontWeight: 500 }}>This week</div>
+            <div style={{ display: "flex", alignItems: "baseline", gap: 6 }}>
+              <span style={{ fontSize: 20, fontWeight: 600, color: T1 }}>{deliveryMetrics.thisWeek}</span>
+              <span style={{
+                fontSize: 12, fontWeight: 600,
+                color: deliveryMetrics.weekDelta > 0 ? GREEN : deliveryMetrics.weekDelta < 0 ? RED : T3,
+              }}>
+                {deliveryMetrics.weekDelta > 0 ? `▲ ${deliveryMetrics.weekDelta}` : deliveryMetrics.weekDelta < 0 ? `▼ ${Math.abs(deliveryMetrics.weekDelta)}` : "—"}
+              </span>
+              <span style={{ fontSize: 11, color: T3 }}>vs last</span>
+            </div>
+          </div>
+
+          <div style={{ width: 1, height: 36, background: DIVIDER }} />
+
+          {/* Top Alert */}
+          <div style={{ flex: 1, minWidth: 140 }}>
+            <div style={{ fontSize: 11, color: T3, fontWeight: 500, marginBottom: 2 }}>Top alert</div>
+            <div style={{
+              fontSize: 12, fontWeight: 600,
+              color: deliveryMetrics.alert.severity === "red" ? RED : deliveryMetrics.alert.severity === "orange" ? ORANGE : GREEN,
+            }}>
+              {deliveryMetrics.alert.severity !== "green" && "⚠ "}{deliveryMetrics.alert.text}
+            </div>
+          </div>
         </div>
 
         {/* Stats */}
@@ -559,6 +692,25 @@ function DashboardShell({
 
           {/* ── Tasks Tab ── */}
           {activeTab === "tasks" && (
+            <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+              {/* Delivery metrics row */}
+              <div style={{ display: "flex", gap: 12 }}>
+                <StatPill label="Completed (30d)" value={deliveryMetrics.total} color={GREEN} />
+                <StatPill
+                  label="On-time rate"
+                  value={deliveryMetrics.onTime !== null ? `${Math.round(deliveryMetrics.onTime * 100)}%` : "—"}
+                  color={deliveryMetrics.onTime !== null && deliveryMetrics.onTime >= 0.8 ? GREEN : deliveryMetrics.onTime !== null && deliveryMetrics.onTime >= 0.5 ? ORANGE : undefined}
+                />
+                <StatPill
+                  label="Avg cycle time"
+                  value={deliveryMetrics.avgCycle !== null ? `${deliveryMetrics.avgCycle}d` : "—"}
+                />
+                <StatPill
+                  label="This week"
+                  value={`${deliveryMetrics.thisWeek} tasks`}
+                  color={deliveryMetrics.weekDelta > 0 ? GREEN : deliveryMetrics.weekDelta < 0 ? RED : undefined}
+                />
+              </div>
             <div style={{ display: "flex", gap: 16 }}>
               <div style={{ flex: 1, background: SURFACE, borderRadius: 8, border: `1px solid ${DIVIDER}`, padding: 16 }}>
                 <div style={{ fontSize: 12, fontWeight: 600, color: T2, marginBottom: 12 }}>Tasks by project</div>
@@ -599,6 +751,7 @@ function DashboardShell({
                   </div>
                 ))}
               </div>
+            </div>
             </div>
           )}
 
@@ -646,7 +799,7 @@ function DashboardShell({
           {activeTab === "workload" && (
             <div style={{ background: SURFACE, borderRadius: 8, border: `1px solid ${DIVIDER}`, overflow: "hidden" }}>
               <div style={{
-                display: "grid", gridTemplateColumns: "1fr 64px 64px 64px 64px 100px",
+                display: "grid", gridTemplateColumns: "1fr 64px 64px 64px 64px 72px 100px",
                 padding: "10px 16px", fontSize: 11, fontWeight: 500, color: T3,
                 borderBottom: `1px solid ${DIVIDER}`,
               }}>
@@ -655,13 +808,17 @@ function DashboardShell({
                 <span style={{ textAlign: "right" }}>Overdue</span>
                 <span style={{ textAlign: "right" }}>Edits</span>
                 <span style={{ textAlign: "right" }}>Eff.</span>
+                <span style={{ textAlign: "right" }}>Cycle</span>
                 <span style={{ textAlign: "right" }}>Status</span>
               </div>
               {workload.map((d, i) => {
                 const eff = effLabel(d.efficiency);
+                // Look up cycle time by original Asana name
+                const asanaName = Object.entries(DESIGN_TEAM).find(([, fig]) => fig === d.name)?.[0] ?? d.name;
+                const cycle = designerCycleTime[asanaName] ?? designerCycleTime[d.name];
                 return (
                   <div key={d.name} style={{
-                    display: "grid", gridTemplateColumns: "1fr 64px 64px 64px 64px 100px",
+                    display: "grid", gridTemplateColumns: "1fr 64px 64px 64px 64px 72px 100px",
                     padding: "10px 16px", alignItems: "center",
                     borderBottom: i < workload.length - 1 ? `1px solid ${DIVIDER}` : "none",
                   }}>
@@ -675,6 +832,9 @@ function DashboardShell({
                     <span style={{ textAlign: "right", fontSize: 13, color: T2 }}>
                       {d.efficiency !== null ? `${d.efficiency}×` : "—"}
                     </span>
+                    <span style={{ textAlign: "right", fontSize: 13, color: cycle != null ? T2 : T4 }}>
+                      {cycle != null ? `${cycle}d` : "—"}
+                    </span>
                     <div style={{ textAlign: "right" }}>
                       {d.highLoad
                         ? <Badge text="High load" color={RED} bg="rgba(242,72,34,0.12)" />
@@ -685,6 +845,98 @@ function DashboardShell({
                   </div>
                 );
               })}
+            </div>
+          )}
+
+          {/* ── Trends Tab ── */}
+          {activeTab === "trends" && (
+            <div>
+              {source.snapshots.length < 2 ? (
+                <div style={{
+                  background: SURFACE, borderRadius: 8, border: `1px solid ${DIVIDER}`,
+                  padding: 40, textAlign: "center",
+                }}>
+                  <div style={{ fontSize: 14, color: T2, fontWeight: 500, marginBottom: 8 }}>Not enough data yet</div>
+                  <div style={{ fontSize: 12, color: T3 }}>
+                    Trends appear after 2+ weekly Figma syncs. Each sync generates a weekly snapshot automatically.
+                    {source.snapshots.length === 1 && " You have 1 snapshot — run another sync next week to see trends."}
+                  </div>
+                </div>
+              ) : (
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
+                  {/* Tasks Completed / Week */}
+                  <div style={{ background: SURFACE, borderRadius: 8, border: `1px solid ${DIVIDER}`, padding: 16 }}>
+                    <div style={{ fontSize: 12, fontWeight: 600, color: T2, marginBottom: 12 }}>Tasks completed / week</div>
+                    <div style={{ height: 200 }}>
+                      <ResponsiveContainer width="100%" height="100%">
+                        <LineChart data={source.snapshots.map(s => ({
+                          week: s.weekOf.slice(5), // "03-16"
+                          value: s.team.tasksCompleted,
+                        }))}>
+                          <XAxis dataKey="week" tick={{ fill: T3, fontSize: 10 }} axisLine={false} tickLine={false} />
+                          <YAxis tick={{ fill: T3, fontSize: 10 }} axisLine={false} tickLine={false} />
+                          <Tooltip contentStyle={{ background: ELEVATED, border: `1px solid ${BORDER}`, borderRadius: 6, fontSize: 12 }} />
+                          <Line type="monotone" dataKey="value" stroke={BLUE} strokeWidth={2} dot={{ fill: BLUE, r: 3 }} name="Completed" />
+                        </LineChart>
+                      </ResponsiveContainer>
+                    </div>
+                  </div>
+
+                  {/* Avg Cycle Time */}
+                  <div style={{ background: SURFACE, borderRadius: 8, border: `1px solid ${DIVIDER}`, padding: 16 }}>
+                    <div style={{ fontSize: 12, fontWeight: 600, color: T2, marginBottom: 12 }}>Avg cycle time (days)</div>
+                    <div style={{ height: 200 }}>
+                      <ResponsiveContainer width="100%" height="100%">
+                        <LineChart data={source.snapshots.map(s => ({
+                          week: s.weekOf.slice(5),
+                          value: s.team.avgCycleTimeDays,
+                        }))}>
+                          <XAxis dataKey="week" tick={{ fill: T3, fontSize: 10 }} axisLine={false} tickLine={false} />
+                          <YAxis tick={{ fill: T3, fontSize: 10 }} axisLine={false} tickLine={false} />
+                          <Tooltip contentStyle={{ background: ELEVATED, border: `1px solid ${BORDER}`, borderRadius: 6, fontSize: 12 }} />
+                          <Line type="monotone" dataKey="value" stroke={ORANGE} strokeWidth={2} dot={{ fill: ORANGE, r: 3 }} name="Cycle Time" connectNulls />
+                        </LineChart>
+                      </ResponsiveContainer>
+                    </div>
+                  </div>
+
+                  {/* On-Time % */}
+                  <div style={{ background: SURFACE, borderRadius: 8, border: `1px solid ${DIVIDER}`, padding: 16 }}>
+                    <div style={{ fontSize: 12, fontWeight: 600, color: T2, marginBottom: 12 }}>On-time delivery %</div>
+                    <div style={{ height: 200 }}>
+                      <ResponsiveContainer width="100%" height="100%">
+                        <LineChart data={source.snapshots.map(s => ({
+                          week: s.weekOf.slice(5),
+                          value: s.team.onTimeRate !== null ? Math.round(s.team.onTimeRate * 100) : null,
+                        }))}>
+                          <XAxis dataKey="week" tick={{ fill: T3, fontSize: 10 }} axisLine={false} tickLine={false} />
+                          <YAxis tick={{ fill: T3, fontSize: 10 }} axisLine={false} tickLine={false} domain={[0, 100]} />
+                          <Tooltip contentStyle={{ background: ELEVATED, border: `1px solid ${BORDER}`, borderRadius: 6, fontSize: 12 }} />
+                          <Line type="monotone" dataKey="value" stroke={GREEN} strokeWidth={2} dot={{ fill: GREEN, r: 3 }} name="On-Time %" connectNulls />
+                        </LineChart>
+                      </ResponsiveContainer>
+                    </div>
+                  </div>
+
+                  {/* Total Edits */}
+                  <div style={{ background: SURFACE, borderRadius: 8, border: `1px solid ${DIVIDER}`, padding: 16 }}>
+                    <div style={{ fontSize: 12, fontWeight: 600, color: T2, marginBottom: 12 }}>Total Figma edits</div>
+                    <div style={{ height: 200 }}>
+                      <ResponsiveContainer width="100%" height="100%">
+                        <LineChart data={source.snapshots.map(s => ({
+                          week: s.weekOf.slice(5),
+                          value: s.team.totalEdits,
+                        }))}>
+                          <XAxis dataKey="week" tick={{ fill: T3, fontSize: 10 }} axisLine={false} tickLine={false} />
+                          <YAxis tick={{ fill: T3, fontSize: 10 }} axisLine={false} tickLine={false} />
+                          <Tooltip contentStyle={{ background: ELEVATED, border: `1px solid ${BORDER}`, borderRadius: 6, fontSize: 12 }} />
+                          <Line type="monotone" dataKey="value" stroke={PURPLE} strokeWidth={2} dot={{ fill: PURPLE, r: 3 }} name="Edits" />
+                        </LineChart>
+                      </ResponsiveContainer>
+                    </div>
+                  </div>
+                </div>
+              )}
             </div>
           )}
         </div>
