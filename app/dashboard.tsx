@@ -52,6 +52,7 @@ interface AsanaTask {
 interface DataSource {
   figmaActivity: DesignerActivity[] | null;
   figmaFileStats: FigmaFileStats[];
+  hourlyActivity: number[];
   asanaTasks: AsanaTask[] | null;
   completedTasks: AsanaTask[] | null;
   snapshots: WeeklySnapshot[];
@@ -153,7 +154,7 @@ function initials(name: string): string {
 
 export default function DesignIntelDashboard() {
   const [source, setSource] = useState<DataSource>({
-    figmaActivity: null, figmaFileStats: [],
+    figmaActivity: null, figmaFileStats: [], hourlyActivity: [],
     asanaTasks: null, completedTasks: null, snapshots: [],
     figmaFiles: [], asanaFiles: [],
     lastFetched: { figma: null, asana: null },
@@ -184,6 +185,7 @@ export default function DesignIntelDashboard() {
         ? await figmaRes.value.json() : null;
       const figmaData = figmaJson?.data as DesignerActivity[] | null ?? null;
       const figmaFileData = (figmaJson?.files ?? []) as FigmaFileStats[];
+      const hourlyData = (figmaJson?.hourlyActivity ?? []) as number[];
       const asanaData = asanaRes.status === "fulfilled" && asanaRes.value.ok
         ? (await asanaRes.value.json()).data as AsanaTask[] : null;
       const completedData = completedRes.status === "fulfilled" && completedRes.value.ok
@@ -202,6 +204,7 @@ export default function DesignIntelDashboard() {
         ...prev,
         figmaActivity: figmaData ?? prev.figmaActivity,
         figmaFileStats: figmaFileData.length > 0 ? figmaFileData : prev.figmaFileStats,
+        hourlyActivity: hourlyData.length > 0 ? hourlyData : prev.hourlyActivity,
         asanaTasks: asanaData ?? prev.asanaTasks,
         completedTasks: completedData ?? prev.completedTasks,
         snapshots: snapshotsData.length > 0 ? snapshotsData : prev.snapshots,
@@ -866,6 +869,34 @@ function DashboardShell({
                 </div>
               ))}
             </div>
+
+            {/* Hourly Heatmap */}
+            {source.hourlyActivity.length === 24 && source.hourlyActivity.some(v => v > 0) && (
+              <div style={{ background: SURFACE, borderRadius: 8, border: `1px solid ${DIVIDER}`, padding: 16, marginTop: 16 }}>
+                <div style={{ fontSize: 12, fontWeight: 600, color: T2, marginBottom: 4 }}>Activity by hour (UTC)</div>
+                <div style={{ fontSize: 11, color: T3, marginBottom: 12 }}>When the team is most active — based on Figma edits and comments</div>
+                <div style={{ display: "flex", gap: 3, alignItems: "flex-end", height: 64 }}>
+                  {source.hourlyActivity.map((count, hour) => {
+                    const max = Math.max(...source.hourlyActivity);
+                    const h = max > 0 ? Math.max(4, (count / max) * 56) : 4;
+                    const intensity = max > 0 ? 0.15 + (count / max) * 0.85 : 0.1;
+                    return (
+                      <div key={hour} style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", gap: 3 }}>
+                        <div style={{
+                          width: "100%", height: h, background: BLUE, opacity: count > 0 ? intensity : 0.06,
+                          borderRadius: 2, transition: "height 0.3s, opacity 0.3s",
+                        }} title={`${hour}:00 UTC — ${count} events`} />
+                        {hour % 3 === 0 && <div style={{ fontSize: 8, color: T3 }}>{hour}h</div>}
+                      </div>
+                    );
+                  })}
+                </div>
+                <div style={{ display: "flex", justifyContent: "space-between", marginTop: 8, fontSize: 10, color: T3 }}>
+                  <span>Peak: {source.hourlyActivity.indexOf(Math.max(...source.hourlyActivity))}:00 UTC ({Math.max(...source.hourlyActivity)} events)</span>
+                  <span>Total: {source.hourlyActivity.reduce((a, b) => a + b, 0)} events</span>
+                </div>
+              </div>
+            )}
 
             {/* File Intelligence */}
             {hotFiles.length > 0 && (
