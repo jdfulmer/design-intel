@@ -9,8 +9,8 @@ import type {
   FigmaDesignerActivity,
 } from "../types.js";
 
-const REQUEST_DELAY_MS = 200;
-const MAX_FILES = 100;
+const REQUEST_DELAY_MS = 500;
+const MAX_FILES = 25;
 
 function getToken(): string {
   const token = process.env.FIGMA_PAT;
@@ -109,8 +109,9 @@ export async function getTeamActivity(
     await delay(REQUEST_DELAY_MS);
   }
 
-  // Sort by last_modified desc and cap
+  // Only include files modified within the date range, sorted by recency, capped
   const allFiles = [...fileProjectMap.entries()]
+    .filter(([, { file }]) => new Date(file.last_modified) >= startDate)
     .sort(
       (a, b) =>
         new Date(b[1].file.last_modified).getTime() -

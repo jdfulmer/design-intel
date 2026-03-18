@@ -36,8 +36,8 @@ export interface FigmaDesignerActivity {
 }
 
 const FIGMA_API = "https://api.figma.com/v1";
-const REQUEST_DELAY_MS = 200;
-const MAX_FILES = 100;
+const REQUEST_DELAY_MS = 500;
+const MAX_FILES = 25;
 
 function getToken(): string {
   const token = process.env.FIGMA_PAT;
@@ -138,8 +138,9 @@ export async function fetchTeamActivity(
     await delay(REQUEST_DELAY_MS);
   }
 
-  // Sort by last_modified desc and cap at MAX_FILES
+  // Only include files modified within the date range, sorted by recency, capped
   const allFiles = Array.from(fileProjectMap.entries())
+    .filter(([, { file }]) => new Date(file.last_modified) >= startDate)
     .sort((a, b) => new Date(b[1].file.last_modified).getTime() - new Date(a[1].file.last_modified).getTime())
     .slice(0, MAX_FILES);
 
