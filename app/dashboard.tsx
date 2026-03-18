@@ -1,6 +1,5 @@
 "use client";
-// app/dashboard.tsx
-// Design Intel — design ops intelligence dashboard
+// app/dashboard.tsx — Design Intel dashboard (Figma admin aesthetic)
 
 import { useState, useEffect, useCallback, useMemo } from "react";
 import {
@@ -37,7 +36,6 @@ interface DataSource {
 }
 
 // ── Design Team ───────────────────────────────────────────────────────────────
-// Asana display name → Figma handle. Only these people appear in the dashboard.
 
 const DESIGN_TEAM: Record<string, string> = {
   "Joshua Fulmer":      "Joshua Fulmer",
@@ -58,10 +56,7 @@ const DESIGN_TEAM: Record<string, string> = {
   "Ryann Christian":    "Ryann",
 };
 
-// All Figma handles that belong to the design team
 const TEAM_FIGMA_NAMES = new Set(Object.values(DESIGN_TEAM));
-
-// All Asana names that belong to the design team
 const TEAM_ASANA_NAMES = new Set(Object.keys(DESIGN_TEAM));
 
 function isTeamTask(task: AsanaTask): boolean {
@@ -74,22 +69,27 @@ function toFigmaName(asanaName: string): string {
 
 const NON_CLIENT_PROJECTS = new Set(["Creative Intake", "Creative Tasks", "General Tasks"]);
 
-// ── Theme — Market Defense ────────────────────────────────────────────────────
-const BG      = "#000000";
-const SURFACE = "#0A0A0A";
-const CREAM   = "#F5F3F1";
-const WHITE   = "#FFFFFF";
-const TEXT    = "#F5F3F1";
-const TEXT2   = "#B1B1B1";
-const DIM     = "#818181";
-const DARK    = "#191919";
-const BORDER  = "#2A2A2A";
-const DANGER  = "#DC2626";
-const WARN    = "#D97706";
-const OK      = "#16A34A";
+// ── Figma Theme ───────────────────────────────────────────────────────────────
 
-const FONT = "'Söhne Mono', 'SF Mono', 'Menlo', monospace";
-const FONT_SANS = "'Söhne', 'Helvetica Neue', 'Arial', sans-serif";
+const BG       = "#1E1E1E";
+const SURFACE  = "#2C2C2C";
+const ELEVATED = "#383838";
+const HOVER    = "#444444";
+const BORDER   = "#444444";
+const DIVIDER  = "#333333";
+
+const T1       = "#FFFFFF";
+const T2       = "rgba(255,255,255,0.8)";
+const T3       = "rgba(255,255,255,0.4)";
+const T4       = "rgba(255,255,255,0.2)";
+
+const BLUE     = "#0D99FF";  // Figma primary blue
+const GREEN    = "#14AE5C";  // Figma success
+const RED      = "#F24822";  // Figma error/warning
+const ORANGE   = "#FFA629";  // Figma caution
+const PURPLE   = "#7B61FF";  // Figma purple (variables)
+
+const FONT     = "'Inter', -apple-system, BlinkMacSystemFont, sans-serif";
 
 // ── Utilities ─────────────────────────────────────────────────────────────────
 
@@ -102,42 +102,44 @@ function isOverdue(task: AsanaTask): boolean {
   return new Date(task.due_on) < new Date(new Date().toISOString().slice(0, 10));
 }
 
-function pressureLabel(score: number): { text: string; color: string } {
-  if (score >= 15) return { text: "HIGH", color: DANGER };
-  if (score >= 8) return { text: "MED", color: WARN };
-  return { text: "LOW", color: OK };
+function pressureLabel(score: number): { text: string; color: string; bg: string } {
+  if (score >= 15) return { text: "High", color: RED, bg: "rgba(242,72,34,0.12)" };
+  if (score >= 8) return { text: "Med", color: ORANGE, bg: "rgba(255,166,41,0.12)" };
+  return { text: "Low", color: GREEN, bg: "rgba(20,174,92,0.12)" };
 }
 
 function effLabel(eff: number | null): { text: string; color: string } {
-  if (eff === null) return { text: "—", color: DIM };
-  if (eff > 3) return { text: "HIGH THRU", color: OK };
-  if (eff >= 1) return { text: "On track", color: TEXT2 };
-  return { text: "Behind", color: WARN };
+  if (eff === null) return { text: "—", color: T4 };
+  if (eff > 3) return { text: "High output", color: GREEN };
+  if (eff >= 1) return { text: "On track", color: BLUE };
+  return { text: "Behind", color: ORANGE };
 }
 
 function fmt(n: number): string {
   return n.toLocaleString();
 }
 
+function initials(name: string): string {
+  return name.split(" ").map(w => w[0]).join("").toUpperCase().slice(0, 2);
+}
+
 // ── Dashboard Entry ───────────────────────────────────────────────────────────
 
 export default function DesignIntelDashboard() {
   const [source, setSource] = useState<DataSource>({
-    figmaActivity: null,
-    asanaTasks: null,
-    figmaFiles: [],
-    asanaFiles: [],
+    figmaActivity: null, asanaTasks: null,
+    figmaFiles: [], asanaFiles: [],
     lastFetched: { figma: null, asana: null },
     mode: "empty",
   });
   const [loading, setLoading] = useState(true);
   const [apiError, setApiError] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
+  const [activeTab, setActiveTab] = useState<"activity" | "tasks" | "pressure" | "workload">("activity");
 
   const fetchFromApi = useCallback(async (force = false) => {
     setRefreshing(true);
     setApiError(null);
-
     try {
       const headers: HeadersInit = {};
       const secret = process.env.NEXT_PUBLIC_API_SECRET;
@@ -150,42 +152,29 @@ export default function DesignIntelDashboard() {
       ]);
 
       const figmaData = figmaRes.status === "fulfilled" && figmaRes.value.ok
-        ? (await figmaRes.value.json()).data as DesignerActivity[]
-        : null;
-
+        ? (await figmaRes.value.json()).data as DesignerActivity[] : null;
       const asanaData = asanaRes.status === "fulfilled" && asanaRes.value.ok
-        ? (await asanaRes.value.json()).data as AsanaTask[]
-        : null;
-
+        ? (await asanaRes.value.json()).data as AsanaTask[] : null;
       const cacheData = cacheRes.status === "fulfilled" && cacheRes.value.ok
-        ? await cacheRes.value.json()
-        : null;
+        ? await cacheRes.value.json() : null;
 
       if (!figmaData && !asanaData) {
         setApiError("No data returned. Check env vars.");
-        setLoading(false);
-        setRefreshing(false);
-        return;
+        setLoading(false); setRefreshing(false); return;
       }
 
       setSource(prev => ({
         ...prev,
         figmaActivity: figmaData ?? prev.figmaActivity,
         asanaTasks: asanaData ?? prev.asanaTasks,
-        figmaFiles: figmaData ? ["Live · Figma API"] : prev.figmaFiles,
-        asanaFiles: asanaData ? ["Live · Asana API"] : prev.asanaFiles,
-        lastFetched: {
-          figma: cacheData?.figma ?? null,
-          asana: cacheData?.asana ?? null,
-        },
-        mode: figmaData && asanaData ? "api"
-          : figmaData || asanaData ? "mixed"
-          : prev.mode,
+        figmaFiles: figmaData ? ["Live"] : prev.figmaFiles,
+        asanaFiles: asanaData ? ["Live"] : prev.asanaFiles,
+        lastFetched: { figma: cacheData?.figma ?? null, asana: cacheData?.asana ?? null },
+        mode: figmaData && asanaData ? "api" : figmaData || asanaData ? "mixed" : prev.mode,
       }));
     } catch (err) {
       setApiError(err instanceof Error ? err.message : "Fetch failed");
     }
-
     setLoading(false);
     setRefreshing(false);
   }, []);
@@ -196,77 +185,107 @@ export default function DesignIntelDashboard() {
     return (
       <div style={{
         minHeight: "100dvh", background: BG, display: "flex",
-        alignItems: "center", justifyContent: "center", flexDirection: "column", gap: 20,
-        fontFamily: FONT_SANS,
+        alignItems: "center", justifyContent: "center", flexDirection: "column", gap: 12,
+        fontFamily: FONT,
       }}>
         <style>{`
+          @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
           @keyframes spin { to { transform: rotate(360deg); } }
         `}</style>
         <div style={{
-          width: 28, height: 28, border: `1.5px solid ${BORDER}`,
-          borderTopColor: CREAM, borderRadius: "50%",
-          animation: "spin 0.9s linear infinite",
+          width: 24, height: 24, border: `2px solid ${DIVIDER}`,
+          borderTopColor: BLUE, borderRadius: "50%",
+          animation: "spin 0.8s linear infinite",
         }} />
-        <div style={{ color: DIM, fontSize: 13, fontWeight: 500, letterSpacing: 1 }}>
-          Loading
-        </div>
+        <div style={{ color: T3, fontSize: 12, fontWeight: 500 }}>Loading dashboard…</div>
       </div>
     );
   }
 
   return (
-    <DashboardCore
-      figmaActivity={source.figmaActivity}
-      asanaTasks={source.asanaTasks}
-      figmaFileNames={source.figmaFiles}
-      lastFetched={source.lastFetched}
+    <DashboardShell
+      source={source}
       apiError={apiError}
       refreshing={refreshing}
       onRefresh={() => fetchFromApi(true)}
+      activeTab={activeTab}
+      setActiveTab={setActiveTab}
     />
   );
 }
 
-// ── Stat Card ─────────────────────────────────────────────────────────────────
+// ── Avatar ────────────────────────────────────────────────────────────────────
 
-function Stat({ label, value, sub, highlight }: { label: string; value: string | number; sub?: string; highlight?: boolean }) {
+const AVATAR_COLORS = [BLUE, PURPLE, GREEN, "#E04678", ORANGE, "#00B8D9", "#6554C0", "#36B37E"];
+
+function Avatar({ name, size = 28 }: { name: string; size?: number }) {
+  const hash = name.split("").reduce((a, c) => a + c.charCodeAt(0), 0);
+  const color = AVATAR_COLORS[hash % AVATAR_COLORS.length];
   return (
-    <div style={{ flex: 1, minWidth: 120 }}>
-      <div style={{
-        fontSize: 11, color: DIM, letterSpacing: 0.5,
-        textTransform: "uppercase", marginBottom: 8, fontWeight: 500,
-      }}>{label}</div>
-      <div style={{
-        fontFamily: FONT, fontSize: 32, fontWeight: 400,
-        color: highlight ? WHITE : CREAM, lineHeight: 1, letterSpacing: -1,
-      }}>{typeof value === "number" ? fmt(value) : value}</div>
-      {sub && <div style={{
-        fontSize: 11, color: DIM, marginTop: 6,
-      }}>{sub}</div>}
+    <div style={{
+      width: size, height: size, borderRadius: size / 2,
+      background: color, display: "flex", alignItems: "center", justifyContent: "center",
+      fontSize: size * 0.38, fontWeight: 600, color: "#fff", flexShrink: 0,
+      letterSpacing: -0.3,
+    }}>{initials(name)}</div>
+  );
+}
+
+// ── Stat Pill ─────────────────────────────────────────────────────────────────
+
+function StatPill({ label, value, color }: { label: string; value: string | number; color?: string }) {
+  return (
+    <div style={{
+      background: SURFACE, borderRadius: 8, padding: "12px 16px",
+      flex: 1, minWidth: 120,
+    }}>
+      <div style={{ fontSize: 11, fontWeight: 500, color: T3, marginBottom: 4 }}>{label}</div>
+      <div style={{ fontSize: 22, fontWeight: 600, color: color ?? T1, letterSpacing: -0.5 }}>
+        {typeof value === "number" ? fmt(value) : value}
+      </div>
     </div>
   );
 }
 
-// ── Panel Wrapper ─────────────────────────────────────────────────────────────
+// ── Tab Button ────────────────────────────────────────────────────────────────
 
-function Panel({ title, children, span }: { title: string; children: React.ReactNode; span?: number }) {
+function Tab({ label, active, onClick }: { label: string; active: boolean; onClick: () => void }) {
+  return (
+    <button onClick={onClick} style={{
+      background: "none", border: "none", cursor: "pointer",
+      padding: "8px 0", marginRight: 24,
+      fontSize: 13, fontWeight: 500, fontFamily: FONT,
+      color: active ? T1 : T3,
+      borderBottom: active ? `2px solid ${BLUE}` : "2px solid transparent",
+      transition: "all 0.15s",
+    }}>{label}</button>
+  );
+}
+
+// ── Badge ─────────────────────────────────────────────────────────────────────
+
+function Badge({ text, color, bg }: { text: string; color: string; bg: string }) {
+  return (
+    <span style={{
+      fontSize: 11, fontWeight: 600, color,
+      background: bg, borderRadius: 4,
+      padding: "2px 6px", letterSpacing: 0.2,
+    }}>{text}</span>
+  );
+}
+
+// ── Custom Tooltip ────────────────────────────────────────────────────────────
+
+function ChartTooltip({ active, payload, label }: { active?: boolean; payload?: Array<{ value: number }>; label?: string }) {
+  if (!active || !payload?.length) return null;
   return (
     <div style={{
-      background: SURFACE,
-      border: `1px solid ${BORDER}`,
-      borderRadius: 0,
-      padding: "24px 24px",
-      gridColumn: span ? `span ${span}` : undefined,
+      background: ELEVATED, border: `1px solid ${BORDER}`, borderRadius: 6,
+      padding: "8px 12px", fontSize: 12, fontFamily: FONT,
+      boxShadow: "0 4px 12px rgba(0,0,0,0.3)",
     }}>
-      <div style={{
-        fontSize: 11, fontWeight: 500, letterSpacing: 1.5,
-        color: DIM, textTransform: "uppercase",
-        marginBottom: 20, paddingBottom: 12,
-        borderBottom: `1px solid ${BORDER}`,
-      }}>
-        {title}
-      </div>
-      {children}
+      <div style={{ color: T1, fontWeight: 500 }}>{label}</div>
+      <div style={{ color: BLUE, marginTop: 2 }}>{fmt(payload[0].value)} tasks</div>
     </div>
   );
 }
@@ -277,65 +296,33 @@ function PressureBar({ score, max }: { score: number; max: number }) {
   const pct = Math.min((score / Math.max(max, 1)) * 100, 100);
   const { color } = pressureLabel(score);
   return (
-    <div style={{ width: "100%", height: 2, background: BORDER, overflow: "hidden" }}>
-      <div style={{
-        width: `${pct}%`, height: "100%", background: color,
-        transition: "width 0.6s ease",
-      }} />
+    <div style={{ width: "100%", height: 3, background: DIVIDER, borderRadius: 2, overflow: "hidden" }}>
+      <div style={{ width: `${pct}%`, height: "100%", background: color, borderRadius: 2, transition: "width 0.5s ease" }} />
     </div>
   );
 }
 
-// ── Custom Tooltip ────────────────────────────────────────────────────────────
+// ── Dashboard Shell ───────────────────────────────────────────────────────────
 
-function ChartTooltip({ active, payload, label }: { active?: boolean; payload?: Array<{ value: number }>; label?: string }) {
-  if (!active || !payload?.length) return null;
-  return (
-    <div style={{
-      background: DARK, border: `1px solid ${BORDER}`, borderRadius: 0,
-      padding: "8px 14px", fontFamily: FONT, fontSize: 11,
-    }}>
-      <div style={{ color: CREAM, fontWeight: 500, marginBottom: 2 }}>{label}</div>
-      <div style={{ color: DIM }}>{fmt(payload[0].value)} tasks</div>
-    </div>
-  );
-}
-
-// ── Dashboard Core ────────────────────────────────────────────────────────────
-
-function DashboardCore({
-  figmaActivity,
-  asanaTasks,
-  figmaFileNames,
-  lastFetched,
-  apiError,
-  refreshing,
-  onRefresh,
+function DashboardShell({
+  source, apiError, refreshing, onRefresh, activeTab, setActiveTab,
 }: {
-  figmaActivity: DesignerActivity[] | null;
-  asanaTasks: AsanaTask[] | null;
-  figmaFileNames: string[];
-  lastFetched: { figma: string | null; asana: string | null };
+  source: DataSource;
   apiError: string | null;
   refreshing: boolean;
   onRefresh: () => void;
+  activeTab: string;
+  setActiveTab: (t: "activity" | "tasks" | "pressure" | "workload") => void;
 }) {
-  const hasLiveData = figmaFileNames.some(f => f.startsWith("Live"));
-
-  // Filter to design team only
-  const teamTasks = useMemo(() => (asanaTasks ?? []).filter(isTeamTask), [asanaTasks]);
-
+  const hasLiveData = source.figmaFiles.some(f => f === "Live");
+  const teamTasks = useMemo(() => (source.asanaTasks ?? []).filter(isTeamTask), [source.asanaTasks]);
   const teamFigma = useMemo(() => {
-    if (!figmaActivity) return [];
-    return figmaActivity.filter(d => TEAM_FIGMA_NAMES.has(d.name));
-  }, [figmaActivity]);
-
-  // ── Computed data ──────────────────────────────────────────────────────────
+    if (!source.figmaActivity) return [];
+    return source.figmaActivity.filter(d => TEAM_FIGMA_NAMES.has(d.name));
+  }, [source.figmaActivity]);
 
   const designers = useMemo(() => {
-    return teamFigma
-      .map(d => ({ ...d, score: designerScore(d) }))
-      .sort((a, b) => b.score - a.score);
+    return teamFigma.map(d => ({ ...d, score: designerScore(d) })).sort((a, b) => b.score - a.score);
   }, [teamFigma]);
 
   const taskStats = useMemo(() => {
@@ -343,29 +330,20 @@ function DashboardCore({
     const overdue = teamTasks.filter(isOverdue).length;
     const byAssignee: Record<string, { total: number; overdue: number }> = {};
     const byProject: Record<string, number> = {};
-
     for (const t of teamTasks) {
       const name = t.assignee?.name ?? "Unassigned";
       byAssignee[name] ??= { total: 0, overdue: 0 };
       byAssignee[name].total++;
       if (isOverdue(t)) byAssignee[name].overdue++;
-
       for (const p of t.projects) {
-        if (!NON_CLIENT_PROJECTS.has(p.name)) {
-          byProject[p.name] = (byProject[p.name] ?? 0) + 1;
-        }
+        if (!NON_CLIENT_PROJECTS.has(p.name)) byProject[p.name] = (byProject[p.name] ?? 0) + 1;
       }
     }
-
-    const topAssignees = Object.entries(byAssignee)
-      .map(([name, s]) => ({ name, ...s }))
-      .sort((a, b) => b.total - a.total);
-
-    const topProjects = Object.entries(byProject)
-      .sort((a, b) => b[1] - a[1])
-      .slice(0, 8);
-
-    return { total, overdue, topAssignees, topProjects };
+    return {
+      total, overdue,
+      topAssignees: Object.entries(byAssignee).map(([name, s]) => ({ name, ...s })).sort((a, b) => b.total - a.total),
+      topProjects: Object.entries(byProject).sort((a, b) => b[1] - a[1]).slice(0, 8),
+    };
   }, [teamTasks]);
 
   const clientPressure = useMemo(() => {
@@ -378,353 +356,338 @@ function DashboardCore({
         if (isOverdue(t)) clientMap[p.name].overdue++;
       }
     }
-
-    const figmaProjectEdits: Record<string, number> = {};
+    const figmaEdits: Record<string, number> = {};
     for (const d of teamFigma) {
-      for (const p of d.projects) {
-        figmaProjectEdits[p] = (figmaProjectEdits[p] ?? 0) + d.edits;
-      }
+      for (const p of d.projects) figmaEdits[p] = (figmaEdits[p] ?? 0) + d.edits;
     }
-
-    return Object.entries(clientMap)
-      .map(([name, c]) => {
-        const matchedEdits = Object.entries(figmaProjectEdits)
-          .filter(([fp]) => fp.toLowerCase().includes(name.toLowerCase()) || name.toLowerCase().includes(fp.toLowerCase()))
-          .reduce((sum, [, v]) => sum + v, 0);
-        const score = c.tasks + c.overdue * 3 - Math.min(matchedEdits * 0.3, c.tasks);
-        return { name, ...c, matchedEdits, pressureScore: Math.round(score) };
-      })
-      .sort((a, b) => b.pressureScore - a.pressureScore)
-      .slice(0, 10);
+    return Object.entries(clientMap).map(([name, c]) => {
+      const matched = Object.entries(figmaEdits)
+        .filter(([fp]) => fp.toLowerCase().includes(name.toLowerCase()) || name.toLowerCase().includes(fp.toLowerCase()))
+        .reduce((sum, [, v]) => sum + v, 0);
+      const score = c.tasks + c.overdue * 3 - Math.min(matched * 0.3, c.tasks);
+      return { name, ...c, matchedEdits: matched, pressureScore: Math.round(score) };
+    }).sort((a, b) => b.pressureScore - a.pressureScore).slice(0, 12);
   }, [teamTasks, teamFigma]);
 
-  const workloadBalance = useMemo(() => {
-    const tasksByFigmaName: Record<string, { active: number; overdue: number }> = {};
+  const workload = useMemo(() => {
+    const byName: Record<string, { active: number; overdue: number }> = {};
     for (const t of teamTasks) {
-      const figmaName = toFigmaName(t.assignee?.name ?? "");
-      if (!figmaName) continue;
-      tasksByFigmaName[figmaName] ??= { active: 0, overdue: 0 };
-      tasksByFigmaName[figmaName].active++;
-      if (isOverdue(t)) tasksByFigmaName[figmaName].overdue++;
+      const fn = toFigmaName(t.assignee?.name ?? "");
+      if (!fn) continue;
+      byName[fn] ??= { active: 0, overdue: 0 };
+      byName[fn].active++;
+      if (isOverdue(t)) byName[fn].overdue++;
     }
-
-    const allNames = new Set([
-      ...teamFigma.map(d => d.name),
-      ...Object.keys(tasksByFigmaName),
-    ]);
-
+    const allNames = new Set([...teamFigma.map(d => d.name), ...Object.keys(byName)]);
     return Array.from(allNames).map(name => {
       const f = teamFigma.find(d => d.name === name);
       const edits = f?.edits ?? 0;
-      const a = tasksByFigmaName[name] ?? { active: 0, overdue: 0 };
-      const efficiency = a.active > 0 ? parseFloat((edits / a.active).toFixed(1)) : null;
-      const highLoad = a.active >= 8 && edits < 15;
-      const highThru = efficiency !== null && efficiency > 3;
-      return { name, edits, activeTasks: a.active, overdue: a.overdue, efficiency, highLoad, highThru };
-    })
-    .filter(d => d.activeTasks > 0 || d.edits > 0)
-    .sort((a, b) => b.activeTasks - a.activeTasks);
+      const a = byName[name] ?? { active: 0, overdue: 0 };
+      const eff = a.active > 0 ? parseFloat((edits / a.active).toFixed(1)) : null;
+      return { name, edits, active: a.active, overdue: a.overdue, efficiency: eff, highLoad: a.active >= 8 && edits < 15, highThru: eff !== null && eff > 3 };
+    }).filter(d => d.active > 0 || d.edits > 0).sort((a, b) => b.active - a.active);
   }, [teamTasks, teamFigma]);
 
   const maxPressure = clientPressure.length ? Math.max(...clientPressure.map(c => c.pressureScore)) : 1;
 
-  // ── Render ─────────────────────────────────────────────────────────────────
-
   return (
-    <div style={{ minHeight: "100dvh", background: BG, fontFamily: FONT_SANS, color: TEXT }}>
+    <div style={{ minHeight: "100dvh", background: BG, fontFamily: FONT, color: T1, display: "flex" }}>
       <style>{`
-        @keyframes fadeIn { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: translateY(0); } }
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+        @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
         * { box-sizing: border-box; }
-        ::-webkit-scrollbar { width: 3px; }
+        ::-webkit-scrollbar { width: 6px; }
         ::-webkit-scrollbar-track { background: transparent; }
-        ::-webkit-scrollbar-thumb { background: ${BORDER}; }
+        ::-webkit-scrollbar-thumb { background: ${ELEVATED}; border-radius: 3px; }
+        ::-webkit-scrollbar-thumb:hover { background: ${HOVER}; }
+        button:hover { opacity: 0.85; }
       `}</style>
 
-      {/* ── Header ── */}
+      {/* ── Sidebar ── */}
       <div style={{
-        padding: "0 40px", height: 64, display: "flex", alignItems: "center", justifyContent: "space-between",
-        borderBottom: `1px solid ${BORDER}`,
+        width: 240, background: SURFACE, borderRight: `1px solid ${DIVIDER}`,
+        display: "flex", flexDirection: "column", flexShrink: 0,
       }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 16 }}>
-          <span style={{ fontSize: 18, fontWeight: 600, color: WHITE, letterSpacing: -0.5 }}>
-            Design Intel
-          </span>
-          <span style={{ fontSize: 12, color: DIM, fontWeight: 400, borderLeft: `1px solid ${BORDER}`, paddingLeft: 16 }}>
-            Market Defense
-          </span>
+        {/* Logo */}
+        <div style={{
+          padding: "16px 16px", display: "flex", alignItems: "center", gap: 10,
+          borderBottom: `1px solid ${DIVIDER}`,
+        }}>
+          <svg width="20" height="20" viewBox="0 0 38 57" fill="none">
+            <path d="M19 28.5a9.5 9.5 0 1 1 19 0 9.5 9.5 0 0 1-19 0z" fill="#1ABCFE"/>
+            <path d="M0 47.5A9.5 9.5 0 0 1 9.5 38H19v9.5a9.5 9.5 0 1 1-19 0z" fill="#0ACF83"/>
+            <path d="M19 0v19h9.5a9.5 9.5 0 1 0 0-19H19z" fill="#FF7262"/>
+            <path d="M0 9.5A9.5 9.5 0 0 0 9.5 19H19V0H9.5A9.5 9.5 0 0 0 0 9.5z" fill="#F24E1E"/>
+            <path d="M0 28.5A9.5 9.5 0 0 0 9.5 38H19V19H9.5A9.5 9.5 0 0 0 0 28.5z" fill="#A259FF"/>
+          </svg>
+          <span style={{ fontSize: 14, fontWeight: 600 }}>Design Intel</span>
         </div>
 
-        <div style={{ display: "flex", alignItems: "center", gap: 20 }}>
+        {/* Nav */}
+        <nav style={{ padding: "12px 8px", flex: 1 }}>
+          <div style={{ fontSize: 11, fontWeight: 500, color: T3, padding: "8px 8px 4px", textTransform: "uppercase", letterSpacing: 0.5 }}>
+            Dashboard
+          </div>
+          {([
+            { id: "activity", label: "Activity", icon: "◆" },
+            { id: "tasks", label: "Tasks", icon: "☐" },
+            { id: "pressure", label: "Client Pressure", icon: "▲" },
+            { id: "workload", label: "Workload", icon: "⊞" },
+          ] as const).map(item => (
+            <button key={item.id} onClick={() => setActiveTab(item.id)} style={{
+              display: "flex", alignItems: "center", gap: 8,
+              width: "100%", padding: "7px 8px", marginBottom: 1,
+              background: activeTab === item.id ? ELEVATED : "transparent",
+              border: "none", borderRadius: 6, cursor: "pointer",
+              fontSize: 13, fontWeight: 500, fontFamily: FONT,
+              color: activeTab === item.id ? T1 : T2,
+              transition: "all 0.1s",
+            }}>
+              <span style={{ fontSize: 11, opacity: 0.6, width: 16, textAlign: "center" }}>{item.icon}</span>
+              {item.label}
+            </button>
+          ))}
+
+          <div style={{ fontSize: 11, fontWeight: 500, color: T3, padding: "16px 8px 4px", textTransform: "uppercase", letterSpacing: 0.5 }}>
+            Team ({designers.length})
+          </div>
+          <div style={{ maxHeight: 240, overflowY: "auto" }}>
+            {designers.map(d => (
+              <div key={d.name} style={{
+                display: "flex", alignItems: "center", gap: 8,
+                padding: "5px 8px", borderRadius: 6,
+              }}>
+                <Avatar name={d.name} size={22} />
+                <span style={{ fontSize: 12, color: T2, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{d.name}</span>
+              </div>
+            ))}
+          </div>
+        </nav>
+
+        {/* Status */}
+        <div style={{
+          padding: "12px 16px", borderTop: `1px solid ${DIVIDER}`,
+          fontSize: 11, color: T3, display: "flex", alignItems: "center", gap: 6,
+        }}>
           {hasLiveData && !apiError && (
-            <div style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 11 }}>
-              <div style={{
-                width: 5, height: 5, borderRadius: "50%", background: OK,
-              }} />
-              <span style={{ color: DIM, fontFamily: FONT, fontSize: 11 }}>
-                Live
-                {lastFetched.figma && ` · Figma ${new Date(lastFetched.figma).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`}
-                {lastFetched.asana && ` · Asana ${new Date(lastFetched.asana).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`}
-              </span>
-            </div>
+            <>
+              <div style={{ width: 5, height: 5, borderRadius: "50%", background: GREEN }} />
+              <span>Connected</span>
+            </>
           )}
-          {apiError && (
-            <span style={{ color: DANGER, fontSize: 11, fontFamily: FONT }}>{apiError}</span>
-          )}
-          <button
-            onClick={onRefresh}
-            disabled={refreshing}
-            style={{
-              background: refreshing ? "transparent" : CREAM,
-              border: refreshing ? `1px solid ${BORDER}` : "none",
-              color: refreshing ? DIM : BG,
-              borderRadius: 0, padding: "7px 18px",
-              fontSize: 12, fontWeight: 500,
-              cursor: refreshing ? "not-allowed" : "pointer",
-              transition: "all 0.15s",
-              fontFamily: FONT_SANS,
-            }}
-          >
-            {refreshing ? "Syncing…" : "Refresh"}
+          {apiError && <span style={{ color: RED }}>Error: {apiError}</span>}
+        </div>
+      </div>
+
+      {/* ── Main Content ── */}
+      <div style={{ flex: 1, overflow: "auto" }}>
+        {/* Header bar */}
+        <div style={{
+          padding: "12px 24px", borderBottom: `1px solid ${DIVIDER}`,
+          display: "flex", alignItems: "center", justifyContent: "space-between",
+        }}>
+          <div style={{ display: "flex", alignItems: "center" }}>
+            <Tab label="Activity" active={activeTab === "activity"} onClick={() => setActiveTab("activity")} />
+            <Tab label="Tasks" active={activeTab === "tasks"} onClick={() => setActiveTab("tasks")} />
+            <Tab label="Client Pressure" active={activeTab === "pressure"} onClick={() => setActiveTab("pressure")} />
+            <Tab label="Workload" active={activeTab === "workload"} onClick={() => setActiveTab("workload")} />
+          </div>
+          <button onClick={onRefresh} disabled={refreshing} style={{
+            background: BLUE, color: "#fff", border: "none", borderRadius: 6,
+            padding: "6px 12px", fontSize: 12, fontWeight: 500, fontFamily: FONT,
+            cursor: refreshing ? "not-allowed" : "pointer", opacity: refreshing ? 0.5 : 1,
+          }}>
+            {refreshing ? "Syncing…" : "Refresh data"}
           </button>
         </div>
-      </div>
 
-      {/* ── Stats Row ── */}
-      <div style={{
-        padding: "32px 40px", display: "flex", gap: 48, flexWrap: "wrap",
-        borderBottom: `1px solid ${BORDER}`,
-        animation: "fadeIn 0.4s ease",
-      }}>
-        <Stat label="Team Members" value={designers.length} highlight />
-        <Stat label="Total Edits" value={designers.reduce((s, d) => s + d.edits, 0)} />
-        <Stat label="Comments" value={designers.reduce((s, d) => s + d.comments, 0)} />
-        <Stat label="Assigned Tasks" value={taskStats.total} />
-        <Stat
-          label="Overdue"
-          value={taskStats.overdue}
-          sub={taskStats.total > 0 ? `${((taskStats.overdue / taskStats.total) * 100).toFixed(0)}% of assigned` : undefined}
-        />
-        <Stat
-          label="Active Files"
-          value={teamFigma.length > 0 ? new Set(teamFigma.flatMap(d => d.files)).size : 0}
-        />
-      </div>
+        {/* Stats */}
+        <div style={{ padding: "20px 24px", display: "flex", gap: 12, flexWrap: "wrap", animation: "fadeIn 0.3s ease" }}>
+          <StatPill label="Team members" value={designers.length} color={BLUE} />
+          <StatPill label="Figma edits" value={designers.reduce((s, d) => s + d.edits, 0)} />
+          <StatPill label="Comments" value={designers.reduce((s, d) => s + d.comments, 0)} />
+          <StatPill label="Assigned tasks" value={taskStats.total} />
+          <StatPill label="Overdue" value={taskStats.overdue} color={taskStats.overdue > 0 ? RED : undefined} />
+          <StatPill label="Active files" value={teamFigma.length > 0 ? new Set(teamFigma.flatMap(d => d.files)).size : 0} />
+        </div>
 
-      {/* ── Grid ── */}
-      <div style={{
-        padding: "32px 40px", display: "grid",
-        gridTemplateColumns: "1fr 1fr",
-        gap: 1, background: BORDER,
-        animation: "fadeIn 0.5s ease 0.1s both",
-      }}>
+        {/* Tab Content */}
+        <div style={{ padding: "0 24px 24px", animation: "fadeIn 0.2s ease" }}>
 
-        {/* ── 1. Designer Leaderboard ── */}
-        <Panel title="Designer Activity">
-          <div style={{ maxHeight: 400, overflowY: "auto" }}>
-            {designers.map((d, i) => (
-              <div key={d.name} style={{
-                display: "flex", alignItems: "center", gap: 14,
-                padding: "12px 0",
-                borderBottom: i < designers.length - 1 ? `1px solid ${BORDER}` : "none",
+          {/* ── Activity Tab ── */}
+          {activeTab === "activity" && (
+            <div style={{ background: SURFACE, borderRadius: 8, border: `1px solid ${DIVIDER}`, overflow: "hidden" }}>
+              <div style={{
+                display: "grid", gridTemplateColumns: "40px 1fr 80px 80px 80px 64px",
+                padding: "10px 16px", fontSize: 11, fontWeight: 500, color: T3,
+                borderBottom: `1px solid ${DIVIDER}`, background: SURFACE,
               }}>
-                <div style={{
-                  fontFamily: FONT, fontSize: 12, fontWeight: 500,
-                  color: i === 0 ? WHITE : DIM, width: 20, textAlign: "center",
+                <span>#</span><span>Designer</span>
+                <span style={{ textAlign: "right" }}>Edits</span>
+                <span style={{ textAlign: "right" }}>Comments</span>
+                <span style={{ textAlign: "right" }}>Files</span>
+                <span style={{ textAlign: "right" }}>Score</span>
+              </div>
+              {designers.map((d, i) => (
+                <div key={d.name} style={{
+                  display: "grid", gridTemplateColumns: "40px 1fr 80px 80px 80px 64px",
+                  padding: "10px 16px", alignItems: "center",
+                  borderBottom: i < designers.length - 1 ? `1px solid ${DIVIDER}` : "none",
+                  transition: "background 0.1s",
                 }}>
-                  {String(i + 1).padStart(2, "0")}
-                </div>
-                <div style={{ flex: 1, minWidth: 0 }}>
-                  <div style={{
-                    fontSize: 14, fontWeight: 500,
-                    color: i === 0 ? WHITE : CREAM,
-                  }}>{d.name}</div>
-                  <div style={{ fontSize: 11, color: DIM, marginTop: 2 }}>
-                    {d.projects.length} project{d.projects.length !== 1 ? "s" : ""} · {d.files.length} file{d.files.length !== 1 ? "s" : ""}
-                  </div>
-                </div>
-                <div style={{ display: "flex", gap: 20, alignItems: "baseline", flexShrink: 0 }}>
-                  <div style={{ textAlign: "right" }}>
-                    <div style={{ fontFamily: FONT, fontSize: 18, fontWeight: 400, color: CREAM }}>{d.edits}</div>
-                    <div style={{ fontSize: 10, color: DIM }}>edits</div>
-                  </div>
-                  <div style={{ textAlign: "right" }}>
-                    <div style={{ fontFamily: FONT, fontSize: 18, fontWeight: 400, color: CREAM }}>{d.comments}</div>
-                    <div style={{ fontSize: 10, color: DIM }}>comments</div>
-                  </div>
-                  <div style={{
-                    fontFamily: FONT, fontSize: 13, fontWeight: 500,
-                    color: BG, background: i === 0 ? CREAM : DARK,
-                    padding: "4px 10px",
-                    minWidth: 48, textAlign: "center",
-                    ...(i !== 0 ? { color: DIM } : {}),
-                  }}>{d.score}</div>
-                </div>
-              </div>
-            ))}
-            {designers.length === 0 && (
-              <div style={{ color: DIM, fontSize: 12, padding: 24, textAlign: "center" }}>
-                Waiting for Figma data…
-              </div>
-            )}
-          </div>
-        </Panel>
-
-        {/* ── 2. Task Overview ── */}
-        <Panel title="Task Overview — Design Team">
-          {taskStats.topProjects.length > 0 && (
-            <div style={{ height: 180, marginBottom: 20 }}>
-              <ResponsiveContainer width="100%" height="100%">
-                <BarChart data={taskStats.topProjects.map(([name, count]) => ({
-                  name: name.length > 14 ? name.slice(0, 12) + "…" : name,
-                  count,
-                }))} margin={{ top: 4, right: 0, left: -20, bottom: 0 }}>
-                  <XAxis
-                    dataKey="name" tick={{ fill: DIM, fontSize: 10, fontFamily: FONT }}
-                    axisLine={false} tickLine={false}
-                  />
-                  <YAxis tick={{ fill: DIM, fontSize: 10, fontFamily: FONT }} axisLine={false} tickLine={false} />
-                  <Tooltip content={<ChartTooltip />} cursor={{ fill: `${CREAM}08` }} />
-                  <Bar dataKey="count" radius={[0, 0, 0, 0]} maxBarSize={28}>
-                    {taskStats.topProjects.map((_, i) => (
-                      <Cell key={i} fill={i === 0 ? CREAM : `${CREAM}40`} />
-                    ))}
-                  </Bar>
-                </BarChart>
-              </ResponsiveContainer>
-            </div>
-          )}
-          <div style={{
-            fontSize: 10, color: DIM, marginBottom: 10,
-            textTransform: "uppercase", letterSpacing: 1.5, fontWeight: 500,
-          }}>
-            By Assignee
-          </div>
-          <div style={{ maxHeight: 160, overflowY: "auto" }}>
-            {taskStats.topAssignees.map((a) => (
-              <div key={a.name} style={{
-                display: "flex", justifyContent: "space-between", alignItems: "center",
-                padding: "7px 0", borderBottom: `1px solid ${BORDER}`,
-              }}>
-                <span style={{ fontSize: 13, color: CREAM, fontWeight: 400 }}>{a.name}</span>
-                <div style={{ display: "flex", gap: 14, fontFamily: FONT, fontSize: 12, alignItems: "center" }}>
-                  <span style={{ color: CREAM }}>{a.total}</span>
-                  {a.overdue > 0 && (
-                    <span style={{
-                      color: DANGER, fontSize: 10, fontWeight: 500,
-                      padding: "1px 6px", border: `1px solid ${DANGER}33`,
-                    }}>{a.overdue} overdue</span>
-                  )}
-                </div>
-              </div>
-            ))}
-          </div>
-          {teamTasks.length === 0 && (
-            <div style={{ color: DIM, fontSize: 12, padding: 24, textAlign: "center" }}>
-              Waiting for Asana data…
-            </div>
-          )}
-        </Panel>
-
-        {/* ── 3. Client Pressure ── */}
-        <Panel title="Client Pressure Index">
-          <div style={{ maxHeight: 400, overflowY: "auto" }}>
-            {clientPressure.map((c, i) => {
-              const p = pressureLabel(c.pressureScore);
-              return (
-                <div key={c.name} style={{
-                  padding: "12px 0",
-                  borderBottom: i < clientPressure.length - 1 ? `1px solid ${BORDER}` : "none",
-                }}>
-                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
-                    <span style={{ fontSize: 14, fontWeight: 500, color: CREAM }}>{c.name}</span>
-                    <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-                      <span style={{ fontFamily: FONT, fontSize: 11, color: DIM }}>
-                        {c.tasks} tasks · {c.overdue} overdue · {c.matchedEdits} edits
-                      </span>
-                      <span style={{
-                        fontFamily: FONT, fontSize: 10, fontWeight: 600,
-                        color: p.color, padding: "2px 8px",
-                        border: `1px solid ${p.color}55`,
-                        letterSpacing: 1,
-                      }}>{p.text}</span>
+                  <span style={{ fontSize: 12, color: T3, fontWeight: 500 }}>{i + 1}</span>
+                  <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                    <Avatar name={d.name} size={28} />
+                    <div>
+                      <div style={{ fontSize: 13, fontWeight: 500, color: T1 }}>{d.name}</div>
+                      <div style={{ fontSize: 11, color: T3 }}>
+                        {d.projects.join(", ").slice(0, 50)}{d.projects.join(", ").length > 50 ? "…" : ""}
+                      </div>
                     </div>
                   </div>
-                  <PressureBar score={c.pressureScore} max={maxPressure} />
+                  <div style={{ textAlign: "right", fontSize: 13, fontWeight: 500, color: T1 }}>{d.edits}</div>
+                  <div style={{ textAlign: "right", fontSize: 13, color: T2 }}>{d.comments}</div>
+                  <div style={{ textAlign: "right", fontSize: 13, color: T3 }}>{d.files.length}</div>
+                  <div style={{
+                    textAlign: "right", fontSize: 13, fontWeight: 600,
+                    color: i === 0 ? BLUE : T1,
+                  }}>{d.score}</div>
                 </div>
-              );
-            })}
-            {clientPressure.length === 0 && (
-              <div style={{ color: DIM, fontSize: 12, padding: 24, textAlign: "center" }}>
-                Need both Figma + Asana data
-              </div>
-            )}
-          </div>
-        </Panel>
-
-        {/* ── 4. Workload Balance ── */}
-        <Panel title="Workload Balance">
-          <div style={{ maxHeight: 400, overflowY: "auto" }}>
-            <div style={{
-              display: "grid", gridTemplateColumns: "1fr 56px 56px 56px 56px 80px",
-              gap: 0, fontSize: 10, color: DIM,
-              textTransform: "uppercase", letterSpacing: 1, fontWeight: 500,
-              padding: "0 0 10px", borderBottom: `1px solid ${BORDER}`,
-            }}>
-              <span>Designer</span>
-              <span style={{ textAlign: "right" }}>Tasks</span>
-              <span style={{ textAlign: "right" }}>Overdue</span>
-              <span style={{ textAlign: "right" }}>Edits</span>
-              <span style={{ textAlign: "right" }}>Eff.</span>
-              <span style={{ textAlign: "right" }}>Status</span>
+              ))}
             </div>
-            {workloadBalance.map((d) => {
-              const eff = effLabel(d.efficiency);
-              return (
-                <div key={d.name} style={{
-                  display: "grid", gridTemplateColumns: "1fr 56px 56px 56px 56px 80px",
-                  gap: 0, padding: "10px 0", borderBottom: `1px solid ${BORDER}`,
-                  alignItems: "center",
-                }}>
-                  <div style={{
-                    fontSize: 13, fontWeight: 400, color: CREAM,
-                    overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
-                  }}>
-                    {d.name}
+          )}
+
+          {/* ── Tasks Tab ── */}
+          {activeTab === "tasks" && (
+            <div style={{ display: "flex", gap: 16 }}>
+              <div style={{ flex: 1, background: SURFACE, borderRadius: 8, border: `1px solid ${DIVIDER}`, padding: 16 }}>
+                <div style={{ fontSize: 12, fontWeight: 600, color: T2, marginBottom: 12 }}>Tasks by project</div>
+                {taskStats.topProjects.length > 0 && (
+                  <div style={{ height: 220 }}>
+                    <ResponsiveContainer width="100%" height="100%">
+                      <BarChart data={taskStats.topProjects.map(([name, count]) => ({
+                        name: name.length > 14 ? name.slice(0, 12) + "…" : name, count,
+                      }))} margin={{ top: 4, right: 0, left: -20, bottom: 0 }}>
+                        <XAxis dataKey="name" tick={{ fill: T3, fontSize: 10 }} axisLine={false} tickLine={false} />
+                        <YAxis tick={{ fill: T3, fontSize: 10 }} axisLine={false} tickLine={false} />
+                        <Tooltip content={<ChartTooltip />} cursor={{ fill: "rgba(255,255,255,0.03)" }} />
+                        <Bar dataKey="count" radius={[4, 4, 0, 0]} maxBarSize={28}>
+                          {taskStats.topProjects.map((_, i) => (
+                            <Cell key={i} fill={i === 0 ? BLUE : `${BLUE}66`} />
+                          ))}
+                        </Bar>
+                      </BarChart>
+                    </ResponsiveContainer>
                   </div>
-                  <div style={{ fontFamily: FONT, fontSize: 13, color: CREAM, textAlign: "right" }}>{d.activeTasks}</div>
-                  <div style={{ fontFamily: FONT, fontSize: 13, color: d.overdue > 0 ? DANGER : DIM, textAlign: "right" }}>{d.overdue}</div>
-                  <div style={{ fontFamily: FONT, fontSize: 13, color: CREAM, textAlign: "right" }}>{d.edits}</div>
-                  <div style={{ fontFamily: FONT, fontSize: 13, color: TEXT2, textAlign: "right" }}>
-                    {d.efficiency !== null ? `${d.efficiency}×` : "—"}
-                  </div>
-                  <div style={{
-                    fontFamily: FONT, fontSize: 10, fontWeight: 500,
-                    color: d.highLoad ? DANGER : eff.color,
-                    textAlign: "right", letterSpacing: 0.5,
-                  }}>
-                    {d.highLoad ? "HIGH LOAD" : d.highThru ? "HIGH THRU" : eff.text}
-                  </div>
-                </div>
-              );
-            })}
-            {workloadBalance.length === 0 && (
-              <div style={{ color: DIM, fontSize: 12, padding: 24, textAlign: "center" }}>
-                Need both Figma + Asana data
+                )}
               </div>
-            )}
-          </div>
-        </Panel>
+              <div style={{ width: 340, background: SURFACE, borderRadius: 8, border: `1px solid ${DIVIDER}`, padding: 16 }}>
+                <div style={{ fontSize: 12, fontWeight: 600, color: T2, marginBottom: 12 }}>By assignee</div>
+                {taskStats.topAssignees.map(a => (
+                  <div key={a.name} style={{
+                    display: "flex", alignItems: "center", justifyContent: "space-between",
+                    padding: "7px 0", borderBottom: `1px solid ${DIVIDER}`,
+                  }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                      <Avatar name={a.name} size={22} />
+                      <span style={{ fontSize: 12, color: T1 }}>{a.name}</span>
+                    </div>
+                    <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                      <span style={{ fontSize: 12, fontWeight: 500, color: T1 }}>{a.total}</span>
+                      {a.overdue > 0 && <Badge text={`${a.overdue} overdue`} color={RED} bg="rgba(242,72,34,0.12)" />}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
 
-      </div>
+          {/* ── Pressure Tab ── */}
+          {activeTab === "pressure" && (
+            <div style={{ background: SURFACE, borderRadius: 8, border: `1px solid ${DIVIDER}`, overflow: "hidden" }}>
+              <div style={{
+                display: "grid", gridTemplateColumns: "1fr 70px 70px 70px 80px",
+                padding: "10px 16px", fontSize: 11, fontWeight: 500, color: T3,
+                borderBottom: `1px solid ${DIVIDER}`,
+              }}>
+                <span>Client</span>
+                <span style={{ textAlign: "right" }}>Tasks</span>
+                <span style={{ textAlign: "right" }}>Overdue</span>
+                <span style={{ textAlign: "right" }}>Edits</span>
+                <span style={{ textAlign: "right" }}>Pressure</span>
+              </div>
+              {clientPressure.map((c, i) => {
+                const p = pressureLabel(c.pressureScore);
+                return (
+                  <div key={c.name}>
+                    <div style={{
+                      display: "grid", gridTemplateColumns: "1fr 70px 70px 70px 80px",
+                      padding: "12px 16px", alignItems: "center",
+                      borderBottom: i < clientPressure.length - 1 ? `1px solid ${DIVIDER}` : "none",
+                    }}>
+                      <span style={{ fontSize: 13, fontWeight: 500, color: T1 }}>{c.name}</span>
+                      <span style={{ textAlign: "right", fontSize: 13, color: T2 }}>{c.tasks}</span>
+                      <span style={{ textAlign: "right", fontSize: 13, color: c.overdue > 0 ? RED : T3 }}>{c.overdue}</span>
+                      <span style={{ textAlign: "right", fontSize: 13, color: c.matchedEdits > 0 ? GREEN : T3 }}>{c.matchedEdits}</span>
+                      <div style={{ textAlign: "right", display: "flex", alignItems: "center", justifyContent: "flex-end", gap: 8 }}>
+                        <Badge text={p.text} color={p.color} bg={p.bg} />
+                      </div>
+                    </div>
+                    <div style={{ padding: "0 16px 8px" }}>
+                      <PressureBar score={c.pressureScore} max={maxPressure} />
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
 
-      {/* ── Footer ── */}
-      <div style={{
-        padding: "20px 40px", borderTop: `1px solid ${BORDER}`,
-        display: "flex", justifyContent: "space-between",
-        fontSize: 11, color: DIM,
-      }}>
-        <span>Design Intel — D2E Labs</span>
-        <span>{new Date().toLocaleDateString("en-US", { weekday: "long", year: "numeric", month: "long", day: "numeric" })}</span>
+          {/* ── Workload Tab ── */}
+          {activeTab === "workload" && (
+            <div style={{ background: SURFACE, borderRadius: 8, border: `1px solid ${DIVIDER}`, overflow: "hidden" }}>
+              <div style={{
+                display: "grid", gridTemplateColumns: "1fr 64px 64px 64px 64px 100px",
+                padding: "10px 16px", fontSize: 11, fontWeight: 500, color: T3,
+                borderBottom: `1px solid ${DIVIDER}`,
+              }}>
+                <span>Designer</span>
+                <span style={{ textAlign: "right" }}>Tasks</span>
+                <span style={{ textAlign: "right" }}>Overdue</span>
+                <span style={{ textAlign: "right" }}>Edits</span>
+                <span style={{ textAlign: "right" }}>Eff.</span>
+                <span style={{ textAlign: "right" }}>Status</span>
+              </div>
+              {workload.map((d, i) => {
+                const eff = effLabel(d.efficiency);
+                return (
+                  <div key={d.name} style={{
+                    display: "grid", gridTemplateColumns: "1fr 64px 64px 64px 64px 100px",
+                    padding: "10px 16px", alignItems: "center",
+                    borderBottom: i < workload.length - 1 ? `1px solid ${DIVIDER}` : "none",
+                  }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                      <Avatar name={d.name} size={24} />
+                      <span style={{ fontSize: 13, fontWeight: 500, color: T1 }}>{d.name}</span>
+                    </div>
+                    <span style={{ textAlign: "right", fontSize: 13, fontWeight: 500, color: T1 }}>{d.active}</span>
+                    <span style={{ textAlign: "right", fontSize: 13, color: d.overdue > 0 ? RED : T3 }}>{d.overdue}</span>
+                    <span style={{ textAlign: "right", fontSize: 13, color: d.edits > 0 ? GREEN : T3 }}>{d.edits}</span>
+                    <span style={{ textAlign: "right", fontSize: 13, color: T2 }}>
+                      {d.efficiency !== null ? `${d.efficiency}×` : "—"}
+                    </span>
+                    <div style={{ textAlign: "right" }}>
+                      {d.highLoad
+                        ? <Badge text="High load" color={RED} bg="rgba(242,72,34,0.12)" />
+                        : d.highThru
+                        ? <Badge text="High output" color={GREEN} bg="rgba(20,174,92,0.12)" />
+                        : <span style={{ fontSize: 11, color: eff.color }}>{eff.text}</span>}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
       </div>
     </div>
   );
