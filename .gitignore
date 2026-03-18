@@ -1,0 +1,28 @@
+# Dependencies
+node_modules/
+mcp/node_modules/
+
+# Build output
+.next/
+mcp/dist/
+
+# Environment — NEVER commit real env vars
+.env.local
+.env
+
+# Vercel
+.vercel
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+npm-debug.log*
+
+# Build artifacts
+tsconfig.tsbuildinfo
+
+# Local Claude settings
+.claude/settings.local.json
