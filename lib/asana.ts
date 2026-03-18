@@ -64,21 +64,41 @@ export async function fetchAsanaTasks(options: {
   const workspace = process.env.ASANA_WORKSPACE_GID;
   if (!workspace) throw new Error("ASANA_WORKSPACE_GID is not set");
 
+  // Asana /tasks requires project, section, or assignee+workspace.
+  // If no project or assignee specified, fetch all projects and aggregate.
+  if (!options.projectGid && !options.assigneeGid) {
+    const projects = await fetchAsanaProjects();
+    const seen = new Set<string>();
+    const allTasks: AsanaTask[] = [];
+    for (const project of projects) {
+      const tasks = await fetchAsanaTasks({ ...options, projectGid: project.gid });
+      for (const t of tasks) {
+        if (!seen.has(t.gid)) {
+          seen.add(t.gid);
+          allTasks.push(t);
+        }
+      }
+    }
+    return allTasks;
+  }
+
   const tasks: AsanaTask[] = [];
   let offset: string | undefined;
   let hasMore = true;
 
   while (hasMore) {
     const params = new URLSearchParams({
-      workspace,
       opt_fields: TASK_FIELDS,
       limit: "100",
       completed_since: options.completedSince ?? "now", // exclude completed by default
     });
 
-    if (options.modifiedSince) params.set("modified_since", options.modifiedSince);
     if (options.projectGid)    params.set("project", options.projectGid);
-    if (options.assigneeGid)   params.set("assignee", options.assigneeGid);
+    if (options.assigneeGid) {
+      params.set("assignee", options.assigneeGid);
+      params.set("workspace", workspace);
+    }
+    if (options.modifiedSince) params.set("modified_since", options.modifiedSince);
     if (offset)                params.set("offset", offset);
 
     const res = await fetch(`${ASANA_API}/tasks?${params}`, {
