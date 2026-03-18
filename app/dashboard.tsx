@@ -355,6 +355,8 @@ function DashboardShell({
   activeTab: string;
   setActiveTab: (t: "activity" | "tasks" | "pressure" | "workload" | "trends" | "flags") => void;
 }) {
+  const [selectedDesigner, setSelectedDesigner] = useState<string | null>(null);
+  const [selectedClient, setSelectedClient] = useState<string | null>(null);
   const hasLiveData = source.figmaFiles.some(f => f === "Live");
   const teamTasks = useMemo(() => (source.asanaTasks ?? []).filter(isTeamTask), [source.asanaTasks]);
   const teamFigma = useMemo(() => {
@@ -409,6 +411,32 @@ function DashboardShell({
       return { name, ...c, matchedEdits: matched, pressureScore: Math.round(score) };
     }).sort((a, b) => b.pressureScore - a.pressureScore).slice(0, 12);
   }, [teamTasks, teamFigma]);
+
+  // ── Designer ↔ Client lookup maps ──────────────────────────────────────────
+  const designerClients = useMemo(() => {
+    const map: Record<string, string[]> = {};
+    for (const t of teamTasks) {
+      const fn = toFigmaName(t.assignee?.name ?? "");
+      if (!fn) continue;
+      for (const p of t.projects) {
+        if (NON_CLIENT_PROJECTS.has(p.name)) continue;
+        map[fn] ??= [];
+        if (!map[fn].includes(p.name)) map[fn].push(p.name);
+      }
+    }
+    return map;
+  }, [teamTasks]);
+
+  const clientDesignerNames = useMemo(() => {
+    const map: Record<string, string[]> = {};
+    for (const [designer, clients] of Object.entries(designerClients)) {
+      for (const client of clients) {
+        map[client] ??= [];
+        if (!map[client].includes(designer)) map[client].push(designer);
+      }
+    }
+    return map;
+  }, [designerClients]);
 
   const workload = useMemo(() => {
     const byName: Record<string, { active: number; overdue: number }> = {};
@@ -625,7 +653,70 @@ function DashboardShell({
       .slice(0, 20);
   }, [source.figmaFileStats]);
 
-  const maxPressure = clientPressure.length ? Math.max(...clientPressure.map(c => c.pressureScore)) : 1;
+  // ── Filtered views for drill-down ────────────────────────────────────────
+  const filteredDesigners = useMemo(() => {
+    if (!selectedClient) return designers;
+    const names = clientDesignerNames[selectedClient];
+    return names ? designers.filter(d => names.includes(d.name)) : designers;
+  }, [designers, selectedClient, clientDesignerNames]);
+
+  const filteredTeamTasks = useMemo(() => {
+    if (!selectedDesigner && !selectedClient) return teamTasks;
+    let result = teamTasks;
+    if (selectedDesigner) {
+      const asanaNames = Object.entries(DESIGN_TEAM)
+        .filter(([, fig]) => fig === selectedDesigner)
+        .map(([asana]) => asana);
+      result = result.filter(t => t.assignee && asanaNames.includes(t.assignee.name));
+    }
+    if (selectedClient) {
+      result = result.filter(t => t.projects.some(p => p.name === selectedClient));
+    }
+    return result;
+  }, [teamTasks, selectedDesigner, selectedClient]);
+
+  const filteredTaskStats = useMemo(() => {
+    const tasks = filteredTeamTasks;
+    const total = tasks.length;
+    const overdue = tasks.filter(isOverdue).length;
+    const byAssignee: Record<string, { total: number; overdue: number }> = {};
+    const byProject: Record<string, number> = {};
+    for (const t of tasks) {
+      const name = t.assignee?.name ?? "Unassigned";
+      byAssignee[name] ??= { total: 0, overdue: 0 };
+      byAssignee[name].total++;
+      if (isOverdue(t)) byAssignee[name].overdue++;
+      for (const p of t.projects) {
+        if (!NON_CLIENT_PROJECTS.has(p.name)) byProject[p.name] = (byProject[p.name] ?? 0) + 1;
+      }
+    }
+    return {
+      total, overdue,
+      topAssignees: Object.entries(byAssignee).map(([name, s]) => ({ name, ...s })).sort((a, b) => b.total - a.total),
+      topProjects: Object.entries(byProject).sort((a, b) => b[1] - a[1]).slice(0, 8),
+    };
+  }, [filteredTeamTasks]);
+
+  const filteredClientPressure = useMemo(() => {
+    if (!selectedDesigner) return clientPressure;
+    const clients = designerClients[selectedDesigner];
+    return clients ? clientPressure.filter(c => clients.includes(c.name)) : clientPressure;
+  }, [clientPressure, selectedDesigner, designerClients]);
+
+  const filteredWorkload = useMemo(() => {
+    if (!selectedClient) return workload;
+    const names = clientDesignerNames[selectedClient];
+    return names ? workload.filter(d => names.includes(d.name)) : workload;
+  }, [workload, selectedClient, clientDesignerNames]);
+
+  const filteredOverdueOverlay = useMemo(() => {
+    if (!selectedDesigner && !selectedClient) return overdueOverlay;
+    if (selectedDesigner) return overdueOverlay.filter(t => t.figmaName === selectedDesigner);
+    if (selectedClient) return overdueOverlay.filter(t => t.clients.includes(selectedClient));
+    return overdueOverlay;
+  }, [overdueOverlay, selectedDesigner, selectedClient]);
+
+  const maxPressure = filteredClientPressure.length ? Math.max(...filteredClientPressure.map(c => c.pressureScore)) : 1;
 
   return (
     <div style={{ minHeight: "100dvh", background: BG, fontFamily: FONT, color: T1, display: "flex" }}>
@@ -690,16 +781,54 @@ function DashboardShell({
           <div style={{ fontSize: 11, fontWeight: 500, color: T3, padding: "16px 8px 4px", textTransform: "uppercase", letterSpacing: 0.5 }}>
             Team ({designers.length})
           </div>
-          <div style={{ maxHeight: 240, overflowY: "auto" }}>
+          <div style={{ maxHeight: 200, overflowY: "auto" }}>
             {designers.map(d => (
-              <div key={d.name} style={{
+              <button key={d.name} onClick={() => {
+                setSelectedClient(null);
+                setSelectedDesigner(prev => prev === d.name ? null : d.name);
+              }} style={{
                 display: "flex", alignItems: "center", gap: 8,
-                padding: "5px 8px", borderRadius: 6,
+                padding: "5px 8px", borderRadius: 6, width: "100%",
+                background: selectedDesigner === d.name ? ELEVATED : "transparent",
+                border: selectedDesigner === d.name ? `1px solid ${BLUE}` : "1px solid transparent",
+                cursor: "pointer", fontFamily: FONT, transition: "all 0.1s",
               }}>
                 <Avatar name={d.name} size={22} />
-                <span style={{ fontSize: 12, color: T2, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{d.name}</span>
-              </div>
+                <span style={{
+                  fontSize: 12, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
+                  color: selectedDesigner === d.name ? BLUE : T2,
+                  fontWeight: selectedDesigner === d.name ? 600 : 400,
+                }}>{d.name}</span>
+              </button>
             ))}
+          </div>
+
+          <div style={{ fontSize: 11, fontWeight: 500, color: T3, padding: "16px 8px 4px", textTransform: "uppercase", letterSpacing: 0.5 }}>
+            Clients ({clientPressure.length})
+          </div>
+          <div style={{ maxHeight: 200, overflowY: "auto" }}>
+            {clientPressure.map(c => {
+              const p = pressureLabel(c.pressureScore);
+              return (
+                <button key={c.name} onClick={() => {
+                  setSelectedDesigner(null);
+                  setSelectedClient(prev => prev === c.name ? null : c.name);
+                }} style={{
+                  display: "flex", alignItems: "center", justifyContent: "space-between",
+                  gap: 8, padding: "5px 8px", borderRadius: 6, width: "100%",
+                  background: selectedClient === c.name ? ELEVATED : "transparent",
+                  border: selectedClient === c.name ? `1px solid ${PURPLE}` : "1px solid transparent",
+                  cursor: "pointer", fontFamily: FONT, transition: "all 0.1s",
+                }}>
+                  <span style={{
+                    fontSize: 12, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
+                    color: selectedClient === c.name ? PURPLE : T2,
+                    fontWeight: selectedClient === c.name ? 600 : 400,
+                  }}>{c.name}</span>
+                  <div style={{ width: 6, height: 6, borderRadius: 3, background: p.color, flexShrink: 0 }} />
+                </button>
+              );
+            })}
           </div>
         </nav>
 
@@ -733,13 +862,48 @@ function DashboardShell({
             <Tab label="Trends" active={activeTab === "trends"} onClick={() => setActiveTab("trends")} />
             <Tab label={`Flags${flags.length > 0 && flags[0].type !== "ok" ? ` (${flags.length})` : ""}`} active={activeTab === "flags"} onClick={() => setActiveTab("flags")} />
           </div>
-          <button onClick={onRefresh} disabled={refreshing} style={{
-            background: BLUE, color: "#fff", border: "none", borderRadius: 6,
-            padding: "6px 12px", fontSize: 12, fontWeight: 500, fontFamily: FONT,
-            cursor: refreshing ? "not-allowed" : "pointer", opacity: refreshing ? 0.5 : 1,
-          }}>
-            {refreshing ? "Syncing…" : "Refresh data"}
-          </button>
+          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+            {(selectedDesigner || selectedClient) && (
+              <>
+                {selectedDesigner && (
+                  <button onClick={() => setSelectedDesigner(null)} style={{
+                    display: "flex", alignItems: "center", gap: 4,
+                    background: `${BLUE}22`, border: `1px solid ${BLUE}44`,
+                    borderRadius: 12, padding: "3px 10px 3px 8px",
+                    fontSize: 11, fontWeight: 500, color: BLUE,
+                    cursor: "pointer", fontFamily: FONT,
+                  }}>
+                    <Avatar name={selectedDesigner} size={14} />
+                    {selectedDesigner}
+                    <span style={{ marginLeft: 4, opacity: 0.6 }}>×</span>
+                  </button>
+                )}
+                {selectedClient && (
+                  <button onClick={() => setSelectedClient(null)} style={{
+                    display: "flex", alignItems: "center", gap: 4,
+                    background: `${PURPLE}22`, border: `1px solid ${PURPLE}44`,
+                    borderRadius: 12, padding: "3px 10px",
+                    fontSize: 11, fontWeight: 500, color: PURPLE,
+                    cursor: "pointer", fontFamily: FONT,
+                  }}>
+                    {selectedClient}
+                    <span style={{ marginLeft: 4, opacity: 0.6 }}>×</span>
+                  </button>
+                )}
+                <button onClick={() => { setSelectedDesigner(null); setSelectedClient(null); }} style={{
+                  background: "none", border: "none", cursor: "pointer",
+                  fontSize: 11, color: T3, fontFamily: FONT,
+                }}>Clear</button>
+              </>
+            )}
+            <button onClick={onRefresh} disabled={refreshing} style={{
+              background: BLUE, color: "#fff", border: "none", borderRadius: 6,
+              padding: "6px 12px", fontSize: 12, fontWeight: 500, fontFamily: FONT,
+              cursor: refreshing ? "not-allowed" : "pointer", opacity: refreshing ? 0.5 : 1,
+            }}>
+              {refreshing ? "Syncing…" : "Refresh data"}
+            </button>
+          </div>
         </div>
 
         {/* ── Executive Summary Card ── */}
@@ -842,11 +1006,13 @@ function DashboardShell({
                 <span style={{ textAlign: "right" }}>Files</span>
                 <span style={{ textAlign: "right" }}>Score</span>
               </div>
-              {designers.map((d, i) => (
+              {filteredDesigners.map((d, i) => (
                 <div key={d.name} style={{
                   display: "grid", gridTemplateColumns: "40px 1fr 80px 80px 80px 64px",
                   padding: "10px 16px", alignItems: "center",
-                  borderBottom: i < designers.length - 1 ? `1px solid ${DIVIDER}` : "none",
+                  borderBottom: i < filteredDesigners.length - 1 ? `1px solid ${DIVIDER}` : "none",
+                  background: selectedDesigner === d.name ? `${BLUE}11` : "transparent",
+                  borderLeft: selectedDesigner === d.name ? `2px solid ${BLUE}` : "2px solid transparent",
                   transition: "background 0.1s",
                 }}>
                   <span style={{ fontSize: 12, color: T3, fontWeight: 500 }}>{i + 1}</span>
@@ -871,7 +1037,7 @@ function DashboardShell({
             </div>
 
             {/* Hourly Heatmap */}
-            {source.hourlyActivity.length === 24 && source.hourlyActivity.some(v => v > 0) && (
+            {source.hourlyActivity.length === 24 && source.hourlyActivity.some(v => v > 0) ? (
               <div style={{ background: SURFACE, borderRadius: 8, border: `1px solid ${DIVIDER}`, padding: 16, marginTop: 16 }}>
                 <div style={{ fontSize: 12, fontWeight: 600, color: T2, marginBottom: 4 }}>Activity by hour (UTC)</div>
                 <div style={{ fontSize: 11, color: T3, marginBottom: 12 }}>When the team is most active — based on Figma edits and comments</div>
@@ -894,6 +1060,16 @@ function DashboardShell({
                 <div style={{ display: "flex", justifyContent: "space-between", marginTop: 8, fontSize: 10, color: T3 }}>
                   <span>Peak: {source.hourlyActivity.indexOf(Math.max(...source.hourlyActivity))}:00 UTC ({Math.max(...source.hourlyActivity)} events)</span>
                   <span>Total: {source.hourlyActivity.reduce((a, b) => a + b, 0)} events</span>
+                </div>
+              </div>
+            ) : (
+              <div style={{
+                background: SURFACE, borderRadius: 8, border: `1px solid ${DIVIDER}`,
+                padding: 40, textAlign: "center", marginTop: 16,
+              }}>
+                <div style={{ fontSize: 14, color: T2, fontWeight: 500, marginBottom: 8 }}>Hourly activity heatmap</div>
+                <div style={{ fontSize: 12, color: T3 }}>
+                  Run a Figma sync to populate hourly activity data. The heatmap will show when the team is most active throughout the day.
                 </div>
               </div>
             )}
@@ -959,17 +1135,17 @@ function DashboardShell({
             <div style={{ display: "flex", gap: 16 }}>
               <div style={{ flex: 1, background: SURFACE, borderRadius: 8, border: `1px solid ${DIVIDER}`, padding: 16 }}>
                 <div style={{ fontSize: 12, fontWeight: 600, color: T2, marginBottom: 12 }}>Tasks by project</div>
-                {taskStats.topProjects.length > 0 && (
+                {filteredTaskStats.topProjects.length > 0 && (
                   <div style={{ height: 220 }}>
                     <ResponsiveContainer width="100%" height="100%">
-                      <BarChart data={taskStats.topProjects.map(([name, count]) => ({
+                      <BarChart data={filteredTaskStats.topProjects.map(([name, count]) => ({
                         name: name.length > 14 ? name.slice(0, 12) + "…" : name, count,
                       }))} margin={{ top: 4, right: 0, left: -20, bottom: 0 }}>
                         <XAxis dataKey="name" tick={{ fill: T3, fontSize: 10 }} axisLine={false} tickLine={false} />
                         <YAxis tick={{ fill: T3, fontSize: 10 }} axisLine={false} tickLine={false} />
                         <Tooltip content={<ChartTooltip />} cursor={{ fill: "rgba(255,255,255,0.03)" }} />
                         <Bar dataKey="count" radius={[4, 4, 0, 0]} maxBarSize={28}>
-                          {taskStats.topProjects.map((_, i) => (
+                          {filteredTaskStats.topProjects.map((_, i) => (
                             <Cell key={i} fill={i === 0 ? BLUE : `${BLUE}66`} />
                           ))}
                         </Bar>
@@ -980,7 +1156,7 @@ function DashboardShell({
               </div>
               <div style={{ width: 340, background: SURFACE, borderRadius: 8, border: `1px solid ${DIVIDER}`, padding: 16 }}>
                 <div style={{ fontSize: 12, fontWeight: 600, color: T2, marginBottom: 12 }}>By assignee</div>
-                {taskStats.topAssignees.map(a => (
+                {filteredTaskStats.topAssignees.map(a => (
                   <div key={a.name} style={{
                     display: "flex", alignItems: "center", justifyContent: "space-between",
                     padding: "7px 0", borderBottom: `1px solid ${DIVIDER}`,
@@ -1042,14 +1218,16 @@ function DashboardShell({
                 <span style={{ textAlign: "right" }}>Edits</span>
                 <span style={{ textAlign: "right" }}>Pressure</span>
               </div>
-              {clientPressure.map((c, i) => {
+              {filteredClientPressure.map((c, i) => {
                 const p = pressureLabel(c.pressureScore);
                 return (
                   <div key={c.name}>
                     <div style={{
                       display: "grid", gridTemplateColumns: "1fr 70px 70px 70px 80px",
                       padding: "12px 16px", alignItems: "center",
-                      borderBottom: i < clientPressure.length - 1 ? `1px solid ${DIVIDER}` : "none",
+                      borderBottom: i < filteredClientPressure.length - 1 ? `1px solid ${DIVIDER}` : "none",
+                      background: selectedClient === c.name ? `${PURPLE}11` : "transparent",
+                      borderLeft: selectedClient === c.name ? `2px solid ${PURPLE}` : "2px solid transparent",
                     }}>
                       <span style={{ fontSize: 13, fontWeight: 500, color: T1 }}>{c.name}</span>
                       <span style={{ textAlign: "right", fontSize: 13, color: T2 }}>{c.tasks}</span>
@@ -1084,7 +1262,7 @@ function DashboardShell({
                 <span style={{ textAlign: "right" }}>Cycle</span>
                 <span style={{ textAlign: "right" }}>Status</span>
               </div>
-              {workload.map((d, i) => {
+              {filteredWorkload.map((d, i) => {
                 const eff = effLabel(d.efficiency);
                 // Look up cycle time by original Asana name
                 const asanaName = Object.entries(DESIGN_TEAM).find(([, fig]) => fig === d.name)?.[0] ?? d.name;
@@ -1093,7 +1271,9 @@ function DashboardShell({
                   <div key={d.name} style={{
                     display: "grid", gridTemplateColumns: "1fr 64px 64px 64px 64px 72px 100px",
                     padding: "10px 16px", alignItems: "center",
-                    borderBottom: i < workload.length - 1 ? `1px solid ${DIVIDER}` : "none",
+                    borderBottom: i < filteredWorkload.length - 1 ? `1px solid ${DIVIDER}` : "none",
+                    background: selectedDesigner === d.name ? `${BLUE}11` : "transparent",
+                    borderLeft: selectedDesigner === d.name ? `2px solid ${BLUE}` : "2px solid transparent",
                   }}>
                     <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
                       <Avatar name={d.name} size={24} />
@@ -1240,7 +1420,7 @@ function DashboardShell({
               </div>
 
               {/* Overdue × Figma Activity overlay */}
-              {overdueOverlay.length > 0 && (
+              {filteredOverdueOverlay.length > 0 && (
                 <div>
                   <div style={{ fontSize: 13, fontWeight: 600, color: T1, marginBottom: 4 }}>Overdue × Figma Activity</div>
                   <div style={{ fontSize: 11, color: T3, marginBottom: 12 }}>Overdue tasks cross-referenced with designer Figma activity on that client — "In Figma" means work exists but may not have shipped.</div>
@@ -1255,11 +1435,11 @@ function DashboardShell({
                       <span style={{ textAlign: "right" }}>Edits</span>
                       <span style={{ textAlign: "right" }}>Status</span>
                     </div>
-                    {overdueOverlay.map((t, i) => (
+                    {filteredOverdueOverlay.map((t, i) => (
                       <div key={i} style={{
                         display: "grid", gridTemplateColumns: "2fr 1fr 80px 80px 90px",
                         padding: "10px 16px", alignItems: "center",
-                        borderBottom: i < overdueOverlay.length - 1 ? `1px solid ${DIVIDER}` : "none",
+                        borderBottom: i < filteredOverdueOverlay.length - 1 ? `1px solid ${DIVIDER}` : "none",
                       }}>
                         <div>
                           <div style={{ fontSize: 12, fontWeight: 500, color: T1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{t.task}</div>
