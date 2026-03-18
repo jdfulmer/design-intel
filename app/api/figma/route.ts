@@ -2,10 +2,10 @@
 // GET /api/figma?start=<unix>&end=<unix>&force=true
 
 import { NextRequest, NextResponse } from "next/server";
-import { fetchFigmaActivity } from "@/lib/figma";
+import { fetchTeamActivity } from "@/lib/figma";
 import { cacheGet, cacheSet, figmaCacheKey, setTimestamp } from "@/lib/cache";
 import { requireApiSecret } from "@/lib/auth";
-import type { FigmaEvent } from "@/lib/figma";
+import type { FigmaDesignerActivity } from "@/lib/figma";
 
 export const runtime = "nodejs";
 
@@ -29,17 +29,17 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
 
   // Return cached data if available and not forcing refresh
   if (!force) {
-    const cached = await cacheGet<FigmaEvent[]>(cacheKey);
+    const cached = await cacheGet<FigmaDesignerActivity[]>(cacheKey);
     if (cached) {
       return NextResponse.json({ data: cached, source: "cache" });
     }
   }
 
   try {
-    const events = await fetchFigmaActivity(startTime, endTime);
-    await cacheSet(cacheKey, events);
+    const activity = await fetchTeamActivity(startTime, endTime);
+    await cacheSet(cacheKey, activity);
     await setTimestamp("figma");
-    return NextResponse.json({ data: events, source: "api" });
+    return NextResponse.json({ data: activity, source: "api" });
   } catch (err) {
     const message = err instanceof Error ? err.message : "Unknown error";
     console.error("[/api/figma]", message);

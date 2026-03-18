@@ -1,15 +1,22 @@
 "use client";
 // app/dashboard.tsx
 // Wraps the V2 dashboard. On load, fetches from /api/figma + /api/asana.
-// Falls back to manual CSV import if API fetch fails or returns no data.
 
 import { useState, useEffect, useCallback } from "react";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
+interface DesignerActivity {
+  name: string;
+  edits: number;
+  comments: number;
+  files: string[];
+  projects: string[];
+}
+
 interface DataSource {
-  figmaEvents: unknown[] | null;   // raw Figma activity log events
-  asanaTasks: unknown[] | null;    // raw Asana tasks
+  figmaActivity: DesignerActivity[] | null;
+  asanaTasks: unknown[] | null;
   figmaFiles: string[];
   asanaFiles: string[];
   lastFetched: { figma: string | null; asana: string | null };
@@ -22,14 +29,13 @@ const ACCENT = "#10b981";
 const MUTED  = "#6b8c7a";
 const TEXT   = "#e2e8e4";
 const BORDER = "#1e2d26";
-const WARN   = "#f59e0b";
 const DANGER = "#ef4444";
 
 // ── Dashboard shell ───────────────────────────────────────────────────────────
 
 export default function DesignIntelDashboard() {
   const [source, setSource] = useState<DataSource>({
-    figmaEvents: null,
+    figmaActivity: null,
     asanaTasks: null,
     figmaFiles: [],
     asanaFiles: [],
@@ -57,7 +63,7 @@ export default function DesignIntelDashboard() {
       ]);
 
       const figmaData = figmaRes.status === "fulfilled" && figmaRes.value.ok
-        ? (await figmaRes.value.json()).data
+        ? (await figmaRes.value.json()).data as DesignerActivity[]
         : null;
 
       const asanaData = asanaRes.status === "fulfilled" && asanaRes.value.ok
@@ -77,7 +83,7 @@ export default function DesignIntelDashboard() {
 
       setSource(prev => ({
         ...prev,
-        figmaEvents: figmaData ?? prev.figmaEvents,
+        figmaActivity: figmaData ?? prev.figmaActivity,
         asanaTasks: asanaData ?? prev.asanaTasks,
         figmaFiles: figmaData ? ["Live · Figma API"] : prev.figmaFiles,
         asanaFiles: asanaData ? ["Live · Asana API"] : prev.asanaFiles,
@@ -119,11 +125,10 @@ export default function DesignIntelDashboard() {
     );
   }
 
-  // Pass everything into the actual dashboard JSX (imported below)
   return (
     <DashboardCore
-      initialFigmaEvents={source.figmaEvents}
-      initialAsanaTasks={source.asanaTasks}
+      figmaActivity={source.figmaActivity}
+      asanaTasks={source.asanaTasks}
       figmaFileNames={source.figmaFiles}
       asanaFileNames={source.asanaFiles}
       lastFetched={source.lastFetched}
@@ -134,22 +139,19 @@ export default function DesignIntelDashboard() {
   );
 }
 
-// ── Minimal status bar injected into the dashboard ───────────────────────────
-// The full DashboardCore component lives in dashboard-core.tsx and is the
-// converted V2 JSX. This file handles the data plumbing layer only.
+// ── Dashboard core ────────────────────────────────────────────────────────────
 
 function DashboardCore({
-  initialFigmaEvents,
-  initialAsanaTasks,
+  figmaActivity,
+  asanaTasks,
   figmaFileNames,
-  asanaFileNames,
   lastFetched,
   apiError,
   refreshing,
   onRefresh,
 }: {
-  initialFigmaEvents: unknown[] | null;
-  initialAsanaTasks: unknown[] | null;
+  figmaActivity: DesignerActivity[] | null;
+  asanaTasks: unknown[] | null;
   figmaFileNames: string[];
   asanaFileNames: string[];
   lastFetched: { figma: string | null; asana: string | null };
@@ -158,6 +160,11 @@ function DashboardCore({
   onRefresh: () => void;
 }) {
   const hasLiveData = figmaFileNames.some(f => f.startsWith("Live"));
+
+  const totalDesigners = figmaActivity?.length ?? 0;
+  const totalFiles = figmaActivity
+    ? new Set(figmaActivity.flatMap(d => d.files)).size
+    : 0;
 
   return (
     <div style={{ minHeight: "100dvh", background: BG, fontFamily: "'Inter',system-ui,sans-serif" }}>
@@ -210,27 +217,19 @@ function DashboardCore({
       )}
 
       {/* ── Dashboard body ── */}
-      {/* NOTE: The full V2 dashboard JSX (from design-intel-dashboard.jsx)   */}
-      {/*   is imported here once it's converted to dashboard-core.tsx.       */}
-      {/*   For now, render a clear status so the scaffold is visually useful */}
       <div style={{ padding: "48px 28px", textAlign: "center" }}>
         <div style={{ color: ACCENT, fontSize: 32, marginBottom: 16 }}>⬡</div>
         <div style={{ color: TEXT, fontSize: 20, fontWeight: 700, marginBottom: 8 }}>
           Design Intel — API Backend Ready
         </div>
         <div style={{ color: MUTED, fontSize: 14, lineHeight: 1.8, maxWidth: 520, margin: "0 auto" }}>
-          {initialFigmaEvents
-            ? `✓ Figma: ${(initialFigmaEvents as unknown[]).length.toLocaleString()} events loaded`
-            : "⚠ Figma data not yet available — set FIGMA_OAUTH_TOKEN and complete /api/figma/auth"}
+          {figmaActivity
+            ? `✓ Figma: ${totalDesigners} designers tracked across ${totalFiles} files`
+            : "⚠ Figma data not yet available — set FIGMA_PAT and FIGMA_TEAM_ID"}
           <br />
-          {initialAsanaTasks
-            ? `✓ Asana: ${(initialAsanaTasks as unknown[]).length.toLocaleString()} tasks loaded`
+          {asanaTasks
+            ? `✓ Asana: ${(asanaTasks as unknown[]).length.toLocaleString()} tasks loaded`
             : "⚠ Asana data not yet available — set ASANA_PAT and ASANA_WORKSPACE_GID"}
-          <br /><br />
-          <span style={{ color: MUTED, fontSize: 12 }}>
-            Next step: copy the V2 dashboard JSX into <code>app/dashboard-core.tsx</code>
-            and wire <code>initialFigmaEvents</code> / <code>initialAsanaTasks</code> as props.
-          </span>
         </div>
       </div>
 

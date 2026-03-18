@@ -1,12 +1,39 @@
 // mcp/src/types.ts — shared TypeScript interfaces
 
-export interface FigmaEvent {
+export interface FigmaProject {
   id: string;
-  timestamp: string;
-  event_type: string;
-  actor: { id: string; name: string; email: string };
-  entity?: { id: string; name: string; type: string };
-  details?: Record<string, unknown>;
+  name: string;
+}
+
+export interface FigmaFileInfo {
+  key: string;
+  name: string;
+  last_modified: string;
+  thumbnail_url?: string;
+}
+
+export interface FigmaVersion {
+  id: string;
+  created_at: string;
+  label: string;
+  description: string;
+  user: { id: string; handle: string; img_url: string };
+}
+
+export interface FigmaComment {
+  id: string;
+  created_at: string;
+  message: string;
+  user: { id: string; handle: string; img_url: string };
+  file_key: string;
+}
+
+export interface FigmaDesignerActivity {
+  name: string;
+  edits: number;
+  comments: number;
+  files: string[];
+  projects: string[];
 }
 
 export interface AsanaTask {
@@ -37,15 +64,14 @@ export interface AsanaCustomField {
 export interface DesignerStats {
   name: string;
   figmaScore: number;
-  exports: number;
-  views: number;
-  creates: number;
+  edits: number;
+  comments: number;
   fileCount: number;
-  teamCount: number;
+  projectCount: number;
   taskTotal: number;
   taskActive: number;
   taskOverdue: number;
-  efficiency: number | null; // exports per active task
+  efficiency: number | null; // edits per active task
 }
 
 export interface ClientPressure {
@@ -53,7 +79,7 @@ export interface ClientPressure {
   tasks: number;
   overdue: number;
   inProgress: number;
-  figmaExports: number;
+  figmaEdits: number;
   designerCount: number;
   pressureScore: number;
 }
@@ -61,7 +87,7 @@ export interface ClientPressure {
 export interface WorkloadSummary {
   designer: string;
   figmaScore: number;
-  figmaExports: number;
+  figmaEdits: number;
   taskActive: number;
   taskOverdue: number;
   efficiency: number | null;

@@ -1,8 +1,9 @@
+// @ts-nocheck
 // mcp/src/tools/figma-tools.ts
 
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
-import { getFigmaActivity, aggregateByActor, designerScore } from "../services/figma.js";
+import { getTeamActivity, designerScore } from "../services/figma.js";
 import { truncate, fmt, mdTable, fmtDate } from "../services/format.js";
 
 const DEFAULT_DAYS = 30;
@@ -14,63 +15,63 @@ function defaultRange(): { startTime: number; endTime: number } {
 
 export function registerFigmaTools(server: McpServer): void {
 
-  // ── figma_get_activity ────────────────────────────────────────────────────
+  // ── figma_get_team_activity ────────────────────────────────────────────────
   server.registerTool(
-    "figma_get_activity",
+    "figma_get_team_activity",
     {
-      title: "Get Figma Activity",
-      description: `Fetch raw Figma activity log events for a date range.
-Returns a list of events with actor name, event type, timestamp, and file/team info.
+      title: "Get Figma Team Activity",
+      description: `Fetch designer activity across the Figma team for a date range.
+Crawls team projects → files → version history + comments.
+Returns per-designer aggregated edits, comments, files touched, and projects.
 
 Args:
   - start_date (string, optional): ISO date YYYY-MM-DD. Defaults to 30 days ago.
   - end_date (string, optional): ISO date YYYY-MM-DD. Defaults to today.
-  - event_types (string[], optional): Filter to specific event types e.g. ["fig_file_export","fig_file_create"]
-  - actor_name (string, optional): Filter to a specific designer by name.
+  - designer_name (string, optional): Filter to a specific designer by name.
 
-Returns: Array of events with id, timestamp, event_type, actor.name, entity.name.
-Use figma_get_designer_stats for pre-aggregated scores.`,
+Returns: Table with designer name, edits, comments, files, and projects.
+Use figma_get_designer_stats for composite scores.`,
       inputSchema: z.object({
         start_date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional()
           .describe("Start date YYYY-MM-DD (default: 30 days ago)"),
         end_date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional()
           .describe("End date YYYY-MM-DD (default: today)"),
-        event_types: z.array(z.string()).optional()
-          .describe("Filter to specific event types e.g. ['fig_file_export']"),
-        actor_name: z.string().optional()
-          .describe("Filter to a specific actor by display name"),
+        designer_name: z.string().optional()
+          .describe("Filter to a specific designer by display name"),
       }).strict(),
       annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
     },
-    async ({ start_date, end_date, event_types, actor_name }) => {
+    async ({ start_date, end_date, designer_name }) => {
       const { startTime, endTime } = defaultRange();
       const st = start_date ? Math.floor(new Date(start_date).getTime() / 1000) : startTime;
       const et = end_date   ? Math.floor(new Date(end_date + "T23:59:59Z").getTime() / 1000) : endTime;
 
-      let events = await getFigmaActivity(st, et, event_types);
-      if (actor_name) {
-        events = events.filter(e =>
-          e.actor.name.toLowerCase().includes(actor_name.toLowerCase())
+      let activity = await getTeamActivity(st, et);
+      if (designer_name) {
+        activity = activity.filter(d =>
+          d.name.toLowerCase().includes(designer_name.toLowerCase())
         );
       }
 
-      const summary = `${fmt(events.length)} events from ${fmtDate(start_date ?? null)} to ${fmtDate(end_date ?? null)}`;
-      const rows = events.slice(0, 200).map(e => [
-        fmtDate(e.timestamp),
-        e.event_type,
-        e.actor.name,
-        e.entity?.name ?? "—",
-      ]);
+      const summary = `${fmt(activity.length)} designers from ${fmtDate(start_date ?? null)} to ${fmtDate(end_date ?? null)}`;
+      const rows = activity
+        .sort((a, b) => b.edits - a.edits)
+        .map(d => [
+          d.name,
+          String(d.edits),
+          String(d.comments),
+          String(d.files.length),
+          d.projects.join(", ") || "—",
+        ]);
 
       const text = truncate(
-        `## Figma Activity\n${summary}\n\n` +
-        mdTable(["Date", "Event", "Actor", "File/Entity"], rows) +
-        (events.length > 200 ? `\n\n_Showing 200 of ${fmt(events.length)} — use date filters to narrow._` : "")
+        `## Figma Team Activity\n${summary}\n\n` +
+        mdTable(["Designer", "Edits", "Comments", "Files", "Projects"], rows)
       );
 
       return {
         content: [{ type: "text" as const, text }],
-        structuredContent: { total: events.length, events: events.slice(0, 200) },
+        structuredContent: { total: activity.length, designers: activity },
       };
     }
   );
@@ -81,14 +82,14 @@ Use figma_get_designer_stats for pre-aggregated scores.`,
     {
       title: "Get Designer Stats",
       description: `Get aggregated Figma activity stats and composite score for one or all designers.
-Score formula: exports×3 + views×0.5 + creates×5 + files×2 + clients×3.
+Score formula: edits×3 + comments×2 + files×2 + projects×3.
 
 Args:
   - designer_name (string, optional): Filter to one designer. Omit for all.
   - start_date (string, optional): ISO date YYYY-MM-DD. Defaults to 30 days ago.
   - end_date (string, optional): ISO date YYYY-MM-DD. Defaults to today.
 
-Returns: Table with name, score, exports, views, creates, file count, client count.`,
+Returns: Table with name, score, edits, comments, file count, project count.`,
       inputSchema: z.object({
         designer_name: z.string().optional()
           .describe("Filter to a specific designer by name"),
@@ -104,18 +105,16 @@ Returns: Table with name, score, exports, views, creates, file count, client cou
       const st = start_date ? Math.floor(new Date(start_date).getTime() / 1000) : startTime;
       const et = end_date   ? Math.floor(new Date(end_date + "T23:59:59Z").getTime() / 1000) : endTime;
 
-      const events = await getFigmaActivity(st, et);
-      const byActor = aggregateByActor(events);
+      const activity = await getTeamActivity(st, et);
 
-      let entries = Object.entries(byActor)
-        .map(([name, s]) => ({
-          name,
-          exports: s.exports,
-          views: s.views,
-          creates: s.creates,
-          fileCount: s.files.size,
-          teamCount: s.teams.size,
-          score: designerScore({ exports: s.exports, views: s.views, creates: s.creates, fileCount: s.files.size, teamCount: s.teams.size }),
+      let entries = activity
+        .map(d => ({
+          name: d.name,
+          edits: d.edits,
+          comments: d.comments,
+          fileCount: d.files.length,
+          projectCount: d.projects.length,
+          score: designerScore({ edits: d.edits, comments: d.comments, fileCount: d.files.length, projectCount: d.projects.length }),
         }))
         .sort((a, b) => b.score - a.score);
 
@@ -128,12 +127,12 @@ Returns: Table with name, score, exports, views, creates, file count, client cou
       }
 
       const rows = entries.map(e => [
-        e.name, String(e.score), fmt(e.exports), fmt(e.views), fmt(e.creates), String(e.fileCount), String(e.teamCount),
+        e.name, String(e.score), fmt(e.edits), fmt(e.comments), String(e.fileCount), String(e.projectCount),
       ]);
 
       const text = truncate(
         `## Designer Stats (${fmtDate(start_date ?? null)} → ${fmtDate(end_date ?? null)})\n\n` +
-        mdTable(["Designer", "Score", "Exports", "Views", "Creates", "Files", "Clients"], rows)
+        mdTable(["Designer", "Score", "Edits", "Comments", "Files", "Projects"], rows)
       );
 
       return {

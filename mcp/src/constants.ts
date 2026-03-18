@@ -31,10 +31,4 @@ export const NON_CLIENT_PROJECTS = new Set([
   "General Tasks",
 ]);
 
-// Figma events that indicate output (used for scoring)
-export const OUTPUT_EVENTS = new Set([
-  "fig_file_export",
-  "fig_file_create",
-]);
-
 export const MAX_RESPONSE_CHARS = 8000;

@@ -6,8 +6,8 @@ import { kv } from "@vercel/kv";
 const TTL_SECONDS = 60 * 60; // 1 hour
 
 export type CacheKey =
-  | `figma:activity:${string}`   // figma:activity:2026-01-01:2026-01-31
-  | `asana:tasks:${string}`      // asana:tasks:all or asana:tasks:2026-03-04
+  | `figma:team-activity:${string}`  // figma:team-activity:1234567890:1234567890
+  | `asana:tasks:${string}`          // asana:tasks:all or asana:tasks:2026-03-04
   | "cache:timestamps";
 
 export interface CacheTimestamps {
@@ -63,7 +63,7 @@ export async function setTimestamp(
 
 /** Build a deterministic cache key for a Figma date range */
 export function figmaCacheKey(startTime: number, endTime: number): CacheKey {
-  return `figma:activity:${startTime}:${endTime}`;
+  return `figma:team-activity:${startTime}:${endTime}`;
 }
 
 /** Build a cache key for Asana tasks (keyed by modified_since date or "all") */

@@ -1,114 +1,189 @@
-// mcp/src/services/figma.ts — Figma Activity Logs API client
+// mcp/src/services/figma.ts — Figma REST API client (standard endpoints, PAT auth)
 
 import { FIGMA_API } from "../constants.js";
-import type { FigmaEvent } from "../types.js";
+import type {
+  FigmaProject,
+  FigmaFileInfo,
+  FigmaVersion,
+  FigmaComment,
+  FigmaDesignerActivity,
+} from "../types.js";
 
-interface FigmaActivityResponse {
-  error: boolean;
-  meta: {
-    activity_logs: FigmaEvent[];
-    cursor?: string;
-    next_page?: boolean;
-  };
-  status: number;
-}
+const REQUEST_DELAY_MS = 200;
+const MAX_FILES = 100;
 
 function getToken(): string {
-  const token = process.env.FIGMA_OAUTH_TOKEN;
-  if (!token) {
-    throw new Error(
-      "FIGMA_OAUTH_TOKEN is not set. Complete the OAuth flow at /api/figma/auth on your deployed dashboard."
-    );
-  }
+  const token = process.env.FIGMA_PAT;
+  if (!token) throw new Error("FIGMA_PAT is not set");
   return token;
 }
 
+function getTeamIds(): string[] {
+  const ids = process.env.FIGMA_TEAM_IDS;
+  if (!ids) throw new Error("FIGMA_TEAM_IDS is not set");
+  return ids.split(",").map((id) => id.trim()).filter(Boolean);
+}
+
+async function figmaFetch<T>(path: string): Promise<T> {
+  const res = await fetch(`${FIGMA_API}${path}`, {
+    headers: { "X-Figma-Token": getToken() },
+  });
+  if (!res.ok) {
+    const body = await res.text();
+    throw new Error(`Figma API ${res.status}: ${body}`);
+  }
+  return res.json() as Promise<T>;
+}
+
+function delay(ms: number): Promise<void> {
+  return new Promise((r) => setTimeout(r, ms));
+}
+
+export async function fetchTeamProjects(teamId: string): Promise<FigmaProject[]> {
+  const data = await figmaFetch<{ projects: FigmaProject[] }>(
+    `/teams/${teamId}/projects`
+  );
+  return data.projects;
+}
+
+export async function fetchProjectFiles(
+  projectId: string
+): Promise<FigmaFileInfo[]> {
+  const data = await figmaFetch<{
+    files: Array<{
+      key: string;
+      name: string;
+      last_modified: string;
+      thumbnail_url?: string;
+    }>;
+  }>(`/projects/${projectId}/files`);
+  return data.files;
+}
+
+export async function fetchFileVersions(
+  fileKey: string
+): Promise<FigmaVersion[]> {
+  const data = await figmaFetch<{ versions: FigmaVersion[] }>(
+    `/files/${fileKey}/versions`
+  );
+  return data.versions;
+}
+
+export async function fetchFileComments(
+  fileKey: string
+): Promise<FigmaComment[]> {
+  const data = await figmaFetch<{ comments: Array<Omit<FigmaComment, "file_key">> }>(
+    `/files/${fileKey}/comments`
+  );
+  return data.comments.map((c) => ({ ...c, file_key: fileKey }));
+}
+
 /**
- * Fetch Figma activity log events for a date range.
- * Handles cursor-based pagination automatically.
+ * Crawl team hierarchy and aggregate designer activity within a date range.
  * startTime/endTime are Unix timestamps (seconds).
  */
-export async function getFigmaActivity(
+export async function getTeamActivity(
   startTime: number,
-  endTime: number,
-  eventFilter?: string[]
-): Promise<FigmaEvent[]> {
-  const token = getToken();
-  const events: FigmaEvent[] = [];
-  let cursor: string | undefined;
-  let hasMore = true;
+  endTime: number
+): Promise<FigmaDesignerActivity[]> {
+  const startDate = new Date(startTime * 1000);
+  const endDate = new Date(endTime * 1000);
 
-  while (hasMore) {
-    const params = new URLSearchParams({
-      start_time: String(startTime),
-      end_time: String(endTime),
-      limit: "200",
-    });
-    if (eventFilter?.length) params.set("events", eventFilter.join(","));
-    if (cursor) params.set("cursor", cursor);
-
-    const res = await fetch(`${FIGMA_API}/activity_logs?${params}`, {
-      headers: { Authorization: `Bearer ${token}` },
-    });
-
-    if (!res.ok) {
-      const body = await res.text();
-      throw new Error(`Figma API ${res.status}: ${body}`);
-    }
-
-    const data: FigmaActivityResponse = await res.json();
-    if (data.error) throw new Error("Figma API returned error flag");
-
-    events.push(...data.meta.activity_logs);
-    cursor = data.meta.cursor;
-    hasMore = data.meta.next_page === true;
+  const teamIds = getTeamIds();
+  const projects: FigmaProject[] = [];
+  for (const teamId of teamIds) {
+    const teamProjects = await fetchTeamProjects(teamId);
+    projects.push(...teamProjects);
+    await delay(REQUEST_DELAY_MS);
   }
 
-  return events;
+  // Collect all files with their project name, deduped by file key
+  const fileProjectMap: Map<string, { file: FigmaFileInfo; projectName: string }> = new Map();
+  for (const project of projects) {
+    const files = await fetchProjectFiles(project.id);
+    for (const file of files) {
+      if (!fileProjectMap.has(file.key)) {
+        fileProjectMap.set(file.key, { file, projectName: project.name });
+      }
+    }
+    await delay(REQUEST_DELAY_MS);
+  }
+
+  // Sort by last_modified desc and cap
+  const allFiles = [...fileProjectMap.entries()]
+    .sort(
+      (a, b) =>
+        new Date(b[1].file.last_modified).getTime() -
+        new Date(a[1].file.last_modified).getTime()
+    )
+    .slice(0, MAX_FILES);
+
+  // Aggregate per designer
+  const designerMap: Map<
+    string,
+    { edits: number; comments: number; files: Set<string>; projects: Set<string> }
+  > = new Map();
+
+  function getOrCreate(name: string) {
+    let entry = designerMap.get(name);
+    if (!entry) {
+      entry = { edits: 0, comments: 0, files: new Set(), projects: new Set() };
+      designerMap.set(name, entry);
+    }
+    return entry;
+  }
+
+  for (const [fileKey, { file, projectName }] of allFiles) {
+    const versions = await fetchFileVersions(fileKey);
+    await delay(REQUEST_DELAY_MS);
+
+    for (const v of versions) {
+      const vDate = new Date(v.created_at);
+      if (vDate >= startDate && vDate <= endDate) {
+        const entry = getOrCreate(v.user.handle);
+        entry.edits++;
+        entry.files.add(file.name);
+        entry.projects.add(projectName);
+      }
+    }
+
+    const comments = await fetchFileComments(fileKey);
+    await delay(REQUEST_DELAY_MS);
+
+    for (const c of comments) {
+      const cDate = new Date(c.created_at);
+      if (cDate >= startDate && cDate <= endDate) {
+        const entry = getOrCreate(c.user.handle);
+        entry.comments++;
+        entry.files.add(file.name);
+        entry.projects.add(projectName);
+      }
+    }
+  }
+
+  return [...designerMap.entries()].map(([name, data]) => ({
+    name,
+    edits: data.edits,
+    comments: data.comments,
+    files: [...data.files],
+    projects: [...data.projects],
+  }));
 }
 
 /**
- * Compute per-actor stats from a set of events.
- */
-export function aggregateByActor(events: FigmaEvent[]): Record<string, {
-  views: number; exports: number; creates: number; renames: number;
-  files: Set<string>; teams: Set<string>;
-}> {
-  const map: Record<string, ReturnType<typeof aggregateByActor>[string]> = {};
-
-  for (const e of events) {
-    const name = e.actor.name;
-    if (!name) continue;
-    if (!map[name]) {
-      map[name] = { views: 0, exports: 0, creates: 0, renames: 0, files: new Set(), teams: new Set() };
-    }
-    const s = map[name];
-    if (e.event_type === "fig_file_view")   s.views++;
-    if (e.event_type === "fig_file_export") s.exports++;
-    if (e.event_type === "fig_file_create") s.creates++;
-    if (e.event_type === "fig_file_rename") s.renames++;
-    const entityName = e.entity?.name;
-    if (entityName) s.files.add(entityName);
-    const team = (e.details as Record<string, string> | undefined)?.team_name;
-    if (team) s.teams.add(team);
-  }
-
-  return map;
-}
-
-/**
- * Compute composite designer score.
- * exports×3 + views×0.5 + creates×5 + files×2 + clients×3
+ * Composite designer score.
+ * edits×3 + comments×2 + files×2 + projects×3
  */
 export function designerScore(stats: {
-  exports: number; views: number; creates: number;
-  fileCount: number; teamCount: number;
+  edits: number;
+  comments: number;
+  fileCount: number;
+  projectCount: number;
 }): number {
   return Math.round(
-    stats.exports * 3 +
-    stats.views * 0.5 +
-    stats.creates * 5 +
-    stats.fileCount * 2 +
-    stats.teamCount * 3
+    stats.edits * 3 +
+      stats.comments * 2 +
+      stats.fileCount * 2 +
+      stats.projectCount * 3
   );
 }

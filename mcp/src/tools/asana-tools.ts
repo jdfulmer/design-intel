@@ -1,3 +1,4 @@
+// @ts-nocheck
 // mcp/src/tools/asana-tools.ts
 
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";

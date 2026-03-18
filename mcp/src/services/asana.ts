@@ -15,7 +15,7 @@ const TASK_FIELDS = [
   "parent.gid", "parent.name",
 ].join(",");
 
-function headers(): HeadersInit {
+function headers(): Record<string, string> {
   const pat = process.env.ASANA_PAT;
   if (!pat) throw new Error("ASANA_PAT is not set");
   return { Authorization: `Bearer ${pat}`, Accept: "application/json" };
@@ -61,7 +61,7 @@ export async function getAsanaTasks(options: {
       throw new Error(`Asana API ${res.status}: ${body}`);
     }
 
-    const data: { data: AsanaTask[]; next_page: { offset: string } | null } = await res.json();
+    const data = await res.json() as { data: AsanaTask[]; next_page: { offset: string } | null };
     tasks.push(...data.data);
     offset = data.next_page?.offset;
     hasMore = !!offset;
@@ -79,7 +79,7 @@ export async function getAsanaProjects(): Promise<Array<{ gid: string; name: str
     { headers: headers() }
   );
   if (!res.ok) throw new Error(`Asana projects ${res.status}: ${await res.text()}`);
-  const data: { data: Array<{ gid: string; name: string }> } = await res.json();
+  const data = await res.json() as { data: Array<{ gid: string; name: string }> };
   return data.data;
 }
 

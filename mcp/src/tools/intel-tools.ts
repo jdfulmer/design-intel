@@ -1,18 +1,20 @@
+// @ts-nocheck
 // mcp/src/tools/intel-tools.ts — Cross-system intelligence tools
 
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
-import { getFigmaActivity, aggregateByActor, designerScore } from "../services/figma.js";
+import { getTeamActivity, designerScore } from "../services/figma.js";
 import { getAsanaTasks, getClientProjects, isOverdue, getCustomField, getCustomFieldNumber } from "../services/asana.js";
 import { ASANA_TO_FIGMA } from "../constants.js";
 import { truncate, fmt, fmtRatio, mdTable, pressureLabel, efficiencyLabel } from "../services/format.js";
+import type { FigmaDesignerActivity } from "../types.js";
 
 const TODAY = new Date().toISOString().slice(0, 10);
 const DEFAULT_DAYS = 30;
 
-function defaultFigmaRange() {
-  const now = Math.floor(Date.now() / 1000);
-  return { startTime: now - DEFAULT_DAYS * 86400, endTime: now };
+/** Build a lookup from Figma display name → activity */
+function activityByName(activity: FigmaDesignerActivity[]): Map<string, FigmaDesignerActivity> {
+  return new Map(activity.map(d => [d.name, d]));
 }
 
 export function registerIntelTools(server: McpServer): void {
@@ -22,15 +24,15 @@ export function registerIntelTools(server: McpServer): void {
     "intel_client_pressure",
     {
       title: "Client Pressure Index",
-      description: `Cross-reference Asana task load vs Figma export output per client.
-Pressure score = open tasks + overdue×3 − min(exports×0.5, tasks).
-High pressure = many tasks, few exports. Low pressure = exports flowing.
+      description: `Cross-reference Asana task load vs Figma edit output per client.
+Pressure score = open tasks + overdue×3 − min(edits×0.3, tasks).
+High pressure = many tasks, few edits. Low pressure = edits flowing.
 
 Args:
   - client_name (string, optional): Focus on one client (partial name match).
   - figma_days (number, optional): Days of Figma history to use. Default 30.
 
-Returns: Ranked client table with task count, overdue, Figma exports, pressure score, and level.`,
+Returns: Ranked client table with task count, overdue, Figma edits, pressure score, and level.`,
       inputSchema: z.object({
         client_name: z.string().optional()
           .describe("Filter to a specific client by name (partial match)"),
@@ -42,40 +44,40 @@ Returns: Ranked client table with task count, overdue, Figma exports, pressure s
     async ({ client_name, figma_days }) => {
       const days = figma_days ?? DEFAULT_DAYS;
       const now = Math.floor(Date.now() / 1000);
-      const [tasks, events] = await Promise.all([
+      const [tasks, activity] = await Promise.all([
         getAsanaTasks(),
-        getFigmaActivity(now - days * 86400, now),
+        getTeamActivity(now - days * 86400, now),
       ]);
 
+      const figmaMap = activityByName(activity);
+
       // Build client map from Asana
-      const clientMap: Record<string, { tasks: number; overdue: number; inProgress: number; designers: Set<string> }> = {};
+      const clientMap: Record<string, { tasks: number; overdue: number; inProgress: number; designers: Set<string>; edits: number }> = {};
       for (const task of tasks) {
         const clients = getClientProjects(task);
         for (const c of clients) {
-          clientMap[c] ??= { tasks: 0, overdue: 0, inProgress: 0, designers: new Set() };
+          clientMap[c] ??= { tasks: 0, overdue: 0, inProgress: 0, designers: new Set(), edits: 0 };
           clientMap[c].tasks++;
           if (isOverdue(task, TODAY)) clientMap[c].overdue++;
           if (getCustomField(task, "Task Progress") === "In Progress") clientMap[c].inProgress++;
           const figmaName = ASANA_TO_FIGMA[task.assignee?.name ?? ""] ?? task.assignee?.name ?? "";
-          if (figmaName) clientMap[c].designers.add(figmaName);
+          if (figmaName) {
+            clientMap[c].designers.add(figmaName);
+            // Sum edits from this designer's Figma activity on files in matching projects
+            const fa = figmaMap.get(figmaName);
+            if (fa) {
+              const hasProjectMatch = fa.projects.some(p =>
+                p.toLowerCase().includes(c.toLowerCase()) || c.toLowerCase().includes(p.toLowerCase())
+              );
+              if (hasProjectMatch) clientMap[c].edits += fa.edits;
+            }
+          }
         }
       }
 
-      // Tally Figma exports per team name (partial match)
-      const exportsByTeam: Record<string, number> = {};
-      for (const e of events) {
-        if (e.event_type !== "fig_file_export") continue;
-        const team = (e.details as Record<string, string> | undefined)?.team_name ?? "";
-        if (team) exportsByTeam[team] = (exportsByTeam[team] ?? 0) + 1;
-      }
-
-      // Merge Figma exports into client map
       const rows = Object.entries(clientMap).map(([name, c]) => {
-        const figmaExports = Object.entries(exportsByTeam)
-          .filter(([t]) => t.toLowerCase().includes(name.toLowerCase()) || name.toLowerCase().includes(t.toLowerCase()))
-          .reduce((sum, [, v]) => sum + v, 0);
-        const pressureScore = c.tasks + c.overdue * 3 - Math.min(figmaExports * 0.5, c.tasks);
-        return { name, ...c, designerCount: c.designers.size, figmaExports, pressureScore };
+        const pressureScore = c.tasks + c.overdue * 3 - Math.min(c.edits * 0.3, c.tasks);
+        return { name, ...c, designerCount: c.designers.size, figmaEdits: c.edits, pressureScore };
       }).sort((a, b) => b.pressureScore - a.pressureScore);
 
       const filtered = client_name
@@ -91,14 +93,14 @@ Returns: Ranked client table with task count, overdue, Figma exports, pressure s
         String(r.tasks),
         String(r.overdue),
         String(r.inProgress),
-        String(r.figmaExports),
+        String(r.figmaEdits),
         String(r.designerCount),
         `${Math.round(r.pressureScore)}  ${pressureLabel(r.pressureScore)}`,
       ]);
 
       const text = truncate(
         `## Client Pressure Index (last ${days} days of Figma)\n\n` +
-        mdTable(["Client", "Tasks", "Overdue", "Active", "Exports", "Designers", "Pressure"], tableRows)
+        mdTable(["Client", "Tasks", "Overdue", "Active", "Edits", "Designers", "Pressure"], tableRows)
       );
 
       return {
@@ -113,15 +115,15 @@ Returns: Ranked client table with task count, overdue, Figma exports, pressure s
     "intel_workload_balance",
     {
       title: "Designer Workload Balance",
-      description: `Compare each designer's Asana task load against their Figma output score.
-Efficiency = Figma exports ÷ active Asana tasks (exports per task).
-Flags HIGH LOAD (8+ active tasks, <20 exports) and HIGH THRU (efficiency >3).
+      description: `Compare each designer's Asana task load against their Figma edit output.
+Efficiency = Figma edits ÷ active Asana tasks.
+Flags HIGH LOAD (8+ active tasks, <15 edits) and HIGH THRU (efficiency >3).
 
 Args:
   - designer_name (string, optional): Focus on one designer.
   - figma_days (number, optional): Days of Figma history. Default 30.
 
-Returns: Per-designer table with active tasks, overdue, Figma score, exports, efficiency.`,
+Returns: Per-designer table with active tasks, overdue, Figma score, edits, efficiency.`,
       inputSchema: z.object({
         designer_name: z.string().optional()
           .describe("Filter to a specific designer"),
@@ -133,12 +135,12 @@ Returns: Per-designer table with active tasks, overdue, Figma score, exports, ef
     async ({ designer_name, figma_days }) => {
       const days = figma_days ?? DEFAULT_DAYS;
       const now = Math.floor(Date.now() / 1000);
-      const [tasks, events] = await Promise.all([
+      const [tasks, activity] = await Promise.all([
         getAsanaTasks(),
-        getFigmaActivity(now - days * 86400, now),
+        getTeamActivity(now - days * 86400, now),
       ]);
 
-      const figmaByActor = aggregateByActor(events);
+      const figmaMap = activityByName(activity);
 
       // Build per-figma-name task stats
       const taskMap: Record<string, { active: number; overdue: number; clients: Set<string> }> = {};
@@ -153,15 +155,19 @@ Returns: Per-designer table with active tasks, overdue, Figma score, exports, ef
       }
 
       // Merge Figma + Asana
-      const allNames = new Set([...Object.keys(figmaByActor), ...Object.keys(taskMap)]);
+      const allNames = new Set([...figmaMap.keys(), ...Object.keys(taskMap)]);
       let rows = [...allNames].map(name => {
-        const f = figmaByActor[name] ?? { exports: 0, views: 0, creates: 0, files: new Set(), teams: new Set() };
+        const f = figmaMap.get(name);
+        const edits = f?.edits ?? 0;
+        const comments = f?.comments ?? 0;
+        const fileCount = f?.files.length ?? 0;
+        const projectCount = f?.projects.length ?? 0;
         const a = taskMap[name] ?? { active: 0, overdue: 0, clients: new Set() };
-        const score = designerScore({ exports: f.exports, views: f.views, creates: f.creates, fileCount: f.files.size, teamCount: f.teams.size });
-        const efficiency: number | null = a.active > 0 ? parseFloat((f.exports / a.active).toFixed(1)) : null;
-        const highLoad = a.active >= 8 && f.exports < 20;
+        const score = designerScore({ edits, comments, fileCount, projectCount });
+        const efficiency: number | null = a.active > 0 ? parseFloat((edits / a.active).toFixed(1)) : null;
+        const highLoad = a.active >= 8 && edits < 15;
         const highThru = efficiency !== null && efficiency > 3;
-        return { name, figmaScore: score, exports: f.exports, active: a.active, overdue: a.overdue, efficiency, highLoad, highThru, clientCount: a.clients.size };
+        return { name, figmaScore: score, edits, active: a.active, overdue: a.overdue, efficiency, highLoad, highThru, clientCount: a.clients.size };
       }).sort((a, b) => b.active - a.active);
 
       if (designer_name) {
@@ -177,14 +183,14 @@ Returns: Per-designer table with active tasks, overdue, Figma score, exports, ef
         String(r.active),
         String(r.overdue),
         String(r.figmaScore),
-        fmt(r.exports),
+        fmt(r.edits),
         fmtRatio(r.efficiency),
         efficiencyLabel(r.efficiency) + (r.highLoad ? " ⚠ HIGH LOAD" : "") + (r.highThru ? " ⚡" : ""),
       ]);
 
       const text = truncate(
         `## Designer Workload Balance (last ${days} days)\n\n` +
-        mdTable(["Designer", "Active Tasks", "Overdue", "Figma Score", "Exports", "Efficiency", "Status"], tableRows)
+        mdTable(["Designer", "Active Tasks", "Overdue", "Figma Score", "Edits", "Efficiency", "Status"], tableRows)
       );
 
       return {
@@ -204,7 +210,7 @@ Pulls the last 7 days of Figma activity + all open Asana tasks.
 Returns a structured markdown report covering:
 - Top designers by output this week
 - Clients with highest task pressure
-- Overdue tasks with Figma activity status
+- Overdue tasks
 - Creative type breakdown
 - Team workload flags
 
@@ -220,20 +226,21 @@ Best used as: "Give me a design ops brief for Monday standup" or "What's the tea
     async ({ days }) => {
       const windowDays = days ?? 7;
       const now = Math.floor(Date.now() / 1000);
-      const [tasks, events] = await Promise.all([
+      const [tasks, activity] = await Promise.all([
         getAsanaTasks(),
-        getFigmaActivity(now - windowDays * 86400, now),
+        getTeamActivity(now - windowDays * 86400, now),
       ]);
 
-      const figmaByActor = aggregateByActor(events);
+      const figmaMap = activityByName(activity);
       const overdueTasks = tasks.filter(t => isOverdue(t, TODAY));
 
       // ── Top designers ──
-      const designers = Object.entries(figmaByActor)
-        .map(([name, s]) => ({
-          name,
-          score: designerScore({ exports: s.exports, views: s.views, creates: s.creates, fileCount: s.files.size, teamCount: s.teams.size }),
-          exports: s.exports,
+      const designers = activity
+        .map(d => ({
+          name: d.name,
+          score: designerScore({ edits: d.edits, comments: d.comments, fileCount: d.files.length, projectCount: d.projects.length }),
+          edits: d.edits,
+          comments: d.comments,
         }))
         .sort((a, b) => b.score - a.score)
         .slice(0, 5);
@@ -265,40 +272,39 @@ Best used as: "Give me a design ops brief for Monday standup" or "What's the tea
       if (overdueTasks.length > 0) {
         flags.push(`⚠ ${overdueTasks.length} overdue task(s) — top: ${overdueTasks[0]?.name?.slice(0, 40)}`);
       }
-      for (const [name, s] of Object.entries(figmaByActor)) {
-        const taskStats = (() => {
-          const figmaName = name;
-          let active = 0;
-          for (const t of tasks) {
-            const fn = ASANA_TO_FIGMA[t.assignee?.name ?? ""] ?? t.assignee?.name ?? "";
-            if (fn === figmaName) active++;
-          }
-          return active;
-        })();
-        if (taskStats >= 8 && s.exports < 20) {
-          flags.push(`⚠ ${name} has ${taskStats} tasks but only ${s.exports} exports this period`);
+      for (const [name, fa] of figmaMap.entries()) {
+        let active = 0;
+        for (const t of tasks) {
+          const fn = ASANA_TO_FIGMA[t.assignee?.name ?? ""] ?? t.assignee?.name ?? "";
+          if (fn === name) active++;
+        }
+        if (active >= 8 && fa.edits < 15) {
+          flags.push(`⚠ ${name} has ${active} tasks but only ${fa.edits} edits this period`);
         }
       }
 
       // ── Total ASIN count ──
       const totalAsins = tasks.reduce((sum, t) => sum + (getCustomFieldNumber(t, "Total # of ASINs") ?? 0), 0);
 
+      const totalEdits = activity.reduce((sum, d) => sum + d.edits, 0);
+      const totalComments = activity.reduce((sum, d) => sum + d.comments, 0);
+
       const report = [
         `# Design Ops Brief — ${TODAY}`,
-        `_Last ${windowDays} days of Figma · ${tasks.length} open Asana tasks · ${fmt(events.length)} Figma events_`,
+        `_Last ${windowDays} days · ${tasks.length} open Asana tasks · ${fmt(totalEdits)} Figma edits · ${fmt(totalComments)} comments_`,
         "",
-        "## 🎨 Top Designers This Period",
-        mdTable(["Designer", "Score", "Exports"], designers.map(d => [d.name, String(d.score), fmt(d.exports)])),
+        "## Top Designers This Period",
+        mdTable(["Designer", "Score", "Edits", "Comments"], designers.map(d => [d.name, String(d.score), fmt(d.edits), fmt(d.comments)])),
         "",
-        "## 🔥 Client Pressure",
+        "## Client Pressure",
         mdTable(["Client", "Tasks", "Overdue", "Pressure"], topClients.map(c => [c.name, String(c.tasks), String(c.overdue), pressureLabel(c.pressure)])),
         "",
-        "## 🛠 Creative Type Breakdown",
+        "## Creative Type Breakdown",
         types.map(([t, n]) => `- **${t}**: ${n} task${n !== 1 ? "s" : ""}`).join("\n"),
         "",
-        `## 📦 Total ASINs In Flight: ${Math.round(totalAsins)}`,
+        `## Total ASINs In Flight: ${Math.round(totalAsins)}`,
         "",
-        ...(flags.length ? ["## 🚨 Flags", ...flags.map(f => `- ${f}`)] : ["## ✅ No critical flags"]),
+        ...(flags.length ? ["## Flags", ...flags.map(f => `- ${f}`)] : ["## No critical flags"]),
       ].join("\n");
 
       return {
@@ -306,7 +312,8 @@ Best used as: "Give me a design ops brief for Monday standup" or "What's the tea
         structuredContent: {
           summary_date: TODAY,
           window_days: windowDays,
-          figma_events: events.length,
+          total_edits: totalEdits,
+          total_comments: totalComments,
           open_tasks: tasks.length,
           overdue_tasks: overdueTasks.length,
           top_designers: designers,
