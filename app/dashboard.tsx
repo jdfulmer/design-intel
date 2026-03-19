@@ -400,14 +400,32 @@ function DashboardShell({
     };
   }, [teamTasks]);
 
+  const completedTasks = useMemo(() => source.completedTasks ?? [], [source.completedTasks]);
+
   const clientPressure = useMemo(() => {
     const clientMap: Record<string, { tasks: number; overdue: number }> = {};
+    // Active tasks
     for (const t of teamTasks) {
       for (const p of t.projects) {
         if (NON_CLIENT_PROJECTS.has(p.name)) continue;
         clientMap[p.name] ??= { tasks: 0, overdue: 0 };
         clientMap[p.name].tasks++;
         if (isOverdue(t)) clientMap[p.name].overdue++;
+      }
+    }
+    // Completed tasks — surface clients even if they have no active work
+    for (const t of completedTasks) {
+      if (!isTeamTask(t)) continue;
+      for (const p of t.projects) {
+        if (NON_CLIENT_PROJECTS.has(p.name)) continue;
+        clientMap[p.name] ??= { tasks: 0, overdue: 0 };
+      }
+    }
+    // Figma projects — surface clients with design activity but no tasking
+    for (const d of teamFigma) {
+      for (const p of d.projects) {
+        if (NON_CLIENT_PROJECTS.has(p)) continue;
+        clientMap[p] ??= { tasks: 0, overdue: 0 };
       }
     }
     const figmaEdits: Record<string, number> = {};
@@ -420,8 +438,8 @@ function DashboardShell({
         .reduce((sum, [, v]) => sum + v, 0);
       const score = c.tasks + c.overdue * 3 - Math.min(matched * 0.3, c.tasks);
       return { name, ...c, matchedEdits: matched, pressureScore: Math.round(score) };
-    }).sort((a, b) => b.pressureScore - a.pressureScore).slice(0, 12);
-  }, [teamTasks, teamFigma]);
+    }).sort((a, b) => b.pressureScore - a.pressureScore);
+  }, [teamTasks, completedTasks, teamFigma]);
 
   // ── Designer ↔ Client lookup maps ──────────────────────────────────────────
   const designerClients = useMemo(() => {
@@ -469,8 +487,6 @@ function DashboardShell({
   }, [teamTasks, teamFigma]);
 
   // ── Delivery Metrics (V1) ──────────────────────────────────────────────────
-  const completedTasks = useMemo(() => source.completedTasks ?? [], [source.completedTasks]);
-
   const deliveryMetrics = useMemo(() => {
     const onTime = onTimeRate(completedTasks);
     const avgCycle = avgCycleTime(completedTasks);
