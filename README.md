@@ -9,7 +9,7 @@ Built for design leads and ops managers who need real-time visibility into what'
 ## What It Does
 
 **Phase 1 — Live Dashboard** (Next.js + Vercel)
-A password-protected, mobile-responsive dashboard that syncs Figma version history and Asana tasks into six intelligence views: Activity, Tasks, Pressure, Workload, Trends, and Flags.
+A password-protected, mobile-responsive dashboard with light/dark theme support that syncs Figma version history and Asana tasks into six intelligence views: Activity, Tasks, Pressure, Workload, Trends, and Flags. Includes a contextual detail panel that shows properties for selected designers or clients.
 
 **Phase 2 — MCP Server** (Claude Code + claude.ai)
 Eight tools that let Claude query your design ops data directly — ask natural language questions about team workload, client pressure, overdue tasks, and weekly summaries.
@@ -44,8 +44,12 @@ Operational alerts with severity levels (Danger, Warn, Ok, Info):
 - **No Figma activity** — client with 3+ tasks but no matching edits
 
 ### Interactive Features
+- **Three-panel layout** — sidebar navigation, main content, and contextual detail panel for selected entities
 - **Drill-down filtering** — click a designer to see only their clients/tasks, or click a client to see only their designers
+- **Detail panel** — shows stats, tasks, files, and clients for the selected designer or client (Figma-style properties panel)
+- **Breadcrumb navigation** — "Design Intel / Activity / Nicole Howard" with clickable segments
 - **Deep linking** — all Asana tasks and Figma files are clickable links to their source
+- **Light/dark theme** — defaults to light (Figma's official token system), toggle in sidebar footer, persists to localStorage
 - **Mobile responsive** — hamburger nav, drawer sidebar, stacked layouts at 768px
 
 ---
@@ -56,26 +60,28 @@ Operational alerts with severity levels (Danger, Warn, Ok, Info):
 design-intel/
 ├── app/
 │   ├── page.tsx                  Dashboard entry point
-│   ├── dashboard.tsx             Main dashboard UI (all 6 tabs)
+│   ├── dashboard.tsx             Main dashboard UI (all 6 tabs + detail panel)
 │   ├── layout.tsx                Root layout
 │   ├── login/page.tsx            Password login page
 │   └── api/
+│       ├── data/route.ts         GET/DELETE — server-side proxy (keeps secrets out of browser)
 │       ├── figma/route.ts        GET  — cached Figma activity
-│       ├── figma/sync/route.ts   POST — chunked Figma crawl
+│       ├── figma/sync/route.ts   POST — chunked Figma crawl (with distributed lock)
 │       ├── asana/route.ts        GET  — Asana tasks (open + completed)
-│       ├── auth/route.ts         POST — password verification
+│       ├── auth/route.ts         POST — password verification (HMAC-SHA256)
 │       ├── cache/route.ts        GET/DELETE — cache status + bust
 │       └── snapshots/route.ts    GET  — weekly trend data
 ├── lib/
-│   ├── figma.ts                  Figma REST API client (PAT auth)
-│   ├── asana.ts                  Asana API client with pagination
-│   ├── cache.ts                  Vercel KV cache layer (1hr TTL)
-│   ├── auth.ts                   API route bearer token guard
-│   └── metrics.ts                Delivery analytics + weekly snapshots
+│   ├── figma.ts                  Figma REST API client (PAT auth, Zod-validated responses)
+│   ├── asana.ts                  Asana API client (pagination cap, Zod-validated responses)
+│   ├── cache.ts                  Vercel KV cache layer (1hr TTL, custom TTL support)
+│   ├── auth.ts                   API route bearer token guard (required in production)
+│   ├── metrics.ts                Delivery analytics + weekly snapshots
+│   └── team-config.ts            Team name mappings + project config (single source of truth)
 ├── mcp/
 │   └── src/
 │       ├── index.ts              MCP server (stdio or HTTP transport)
-│       ├── constants.ts          Name mappings (Asana ↔ Figma)
+│       ├── constants.ts          Name mappings (synced from lib/team-config.ts)
 │       ├── tools/
 │       │   ├── figma-tools.ts    figma_get_team_activity, figma_get_designer_stats
 │       │   ├── asana-tools.ts    asana_get_tasks, asana_get_overdue, asana_get_projects
@@ -84,7 +90,11 @@ design-intel/
 │           ├── figma.ts          Figma API calls + aggregation
 │           ├── asana.ts          Asana API calls + helpers
 │           └── format.ts         Markdown tables, truncation, labels
-├── middleware.ts                 Password gate (cookie-based auth)
+├── __tests__/
+│   ├── metrics.test.ts           42 tests — cycle time, on-time rate, health score, flags
+│   └── auth.test.ts              8 tests — bearer validation, dev mode, edge cases
+├── middleware.ts                 Password gate (HMAC-SHA256 cookie auth)
+├── vitest.config.ts              Test configuration
 └── .env.local.example            Environment variable template
 ```
 
@@ -112,7 +122,7 @@ cp .env.local.example .env.local
 | `FIGMA_TEAM_IDS` | Yes | Figma URL: `figma.com/files/team/TEAM_ID/...` (comma-separated) |
 | `ASANA_PAT` | Yes | app.asana.com/0/my-apps → Personal access tokens |
 | `ASANA_WORKSPACE_GID` | Yes | Visit `app.asana.com/api/1.0/workspaces` while logged in |
-| `API_SECRET` | Yes | `openssl rand -hex 32` — protects API routes |
+| `API_SECRET` | Yes | `openssl rand -hex 32` — protects API routes (required in production) |
 | `DASHBOARD_PASSWORD` | No | Set to require login; leave empty for open access |
 | `NEXT_PUBLIC_APP_URL` | No | Your Vercel deployment URL (set after first deploy) |
 
@@ -135,6 +145,13 @@ In the Vercel dashboard → Storage → Create KV store → attach to this proje
 npm run dev
 ```
 
+### 6. Run tests
+
+```bash
+npm test           # single run
+npm run test:watch # watch mode
+```
+
 ---
 
 ## How It Works
@@ -151,11 +168,11 @@ Team → Projects → Files → Version History + Comments
 - **Comments** → who reviewed or gave feedback
 - **File/project structure** → which files and projects each designer touched
 
-The sync runs in chunks to stay within Vercel's 60-second free tier limit and respects Figma's 20 req/min rate limit with built-in delays.
+The sync runs in chunks to stay within Vercel's 60-second free tier limit, respects Figma's 20 req/min rate limit with built-in delays, and uses a distributed KV lock to prevent concurrent syncs from corrupting state. All API responses are validated with Zod schemas.
 
 ### Asana Integration
 
-Pulls tasks with full metadata: assignee, due dates, completion status, custom fields (Task Progress, Type of Creative, Total ASINs), and project memberships. Supports pagination for large workspaces.
+Pulls tasks with full metadata: assignee, due dates, completion status, custom fields (Task Progress, Type of Creative, Total ASINs), and project memberships. Pagination is capped at 1,000 results to prevent memory/timeout issues. Responses are Zod-validated.
 
 ### Caching
 
@@ -165,25 +182,35 @@ Pulls tasks with full metadata: assignee, due dates, completion status, custom f
 | Figma sync results | 24 hours |
 | Completed tasks | 6 hours |
 | Weekly snapshots | 90 days |
+| Sync lock | 5 minutes |
 
 Cache can be busted manually via the dashboard refresh button or `DELETE /api/cache`.
 
-### Name Mapping
+### Team Configuration
 
-Figma and Asana use different display names for the same people. The mapping lives in `mcp/src/constants.ts` (MCP) and `app/dashboard.tsx` (dashboard). Update both when team members change.
+Figma and Asana use different display names for the same people. The canonical mapping lives in `lib/team-config.ts`. The MCP server keeps a synced copy in `mcp/src/constants.ts` (separate build). Update `lib/team-config.ts` when team members join, leave, or change display names.
+
+### Security
+
+- **Authentication**: HMAC-SHA256 cookie auth with timing-safe comparison (replaced FNV-1a)
+- **API protection**: Bearer token required on all API routes; `API_SECRET` must be set in production
+- **Secret isolation**: Dashboard uses a server-side proxy (`/api/data`) — no secrets in the browser
+- **Error handling**: Differentiated error messages (401/429/5xx/network) instead of generic "Fetch failed"
 
 ---
 
 ## API Routes
 
-All routes require `Authorization: Bearer <API_SECRET>` header.
+All internal routes require `Authorization: Bearer <API_SECRET>` header. The dashboard uses `/api/data` as a server-side proxy.
 
 | Route | Method | Description |
 |-------|--------|-------------|
+| `/api/data` | GET | Server-side proxy — adds auth header, forwards to internal routes |
+| `/api/data` | DELETE | Proxy for cache bust (`source=cache-bust`) |
 | `/api/figma` | GET | Cached Figma designer activity |
-| `/api/figma/sync` | POST | Trigger chunked Figma crawl (projects → files → versions) |
+| `/api/figma/sync` | POST | Trigger chunked Figma crawl (with distributed lock) |
 | `/api/asana` | GET | Asana tasks. Params: `modified_since`, `project`, `include_completed`, `force` |
-| `/api/auth` | POST | Password login — sets auth cookie |
+| `/api/auth` | POST | Password login — sets HMAC-SHA256 auth cookie |
 | `/api/cache` | GET | Cache timestamps (last Figma/Asana fetch times) |
 | `/api/cache` | DELETE | Bust cache — forces re-fetch on next request |
 | `/api/snapshots` | GET | Last 12 weekly snapshots for trend charts |
@@ -252,8 +279,11 @@ All tools return markdown tables and support name-based filtering (partial match
 
 ## Tech Stack
 
-- **Frontend**: Next.js 14 (App Router), React 18, Recharts, Tailwind-style inline CSS
+- **Frontend**: Next.js 14 (App Router), React 18, Recharts, CSS custom properties (Figma token system)
 - **Backend**: Next.js API routes, Vercel KV (Redis)
 - **APIs**: Figma REST API (PAT auth), Asana Tasks API (PAT auth)
+- **Validation**: Zod schemas on all external API responses
+- **Auth**: HMAC-SHA256 cookie auth, bearer token API protection
+- **Testing**: Vitest (50 tests across metrics + auth)
 - **MCP**: TypeScript, stdio + HTTP transport
-- **Deploy**: Vercel (free tier compatible with chunked sync)
+- **Deploy**: Vercel (free tier compatible with chunked sync + distributed lock)
