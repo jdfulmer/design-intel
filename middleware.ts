@@ -25,10 +25,11 @@ export async function middleware(req: NextRequest) {
 
   const { pathname } = req.nextUrl;
 
-  // Allow login page, auth API, and static assets through
+  // Allow login page, all API routes, and static assets through
+  // API routes have their own bearer token auth via lib/auth.ts
   if (
     pathname === "/login" ||
-    pathname === "/api/auth" ||
+    pathname.startsWith("/api/") ||
     pathname.startsWith("/_next") ||
     pathname.startsWith("/favicon")
   ) {
