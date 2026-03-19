@@ -1,10 +1,52 @@
 # Design Intel
 
-Figma × Asana cross-intelligence dashboard for design ops at D2E Labs / Market Defense.
+Cross-platform design operations intelligence — connects Figma activity data with Asana task management to surface workload imbalances, client pressure, delivery trends, and operational risks across your design team.
 
-**Phase 1** — Live Next.js dashboard powered by Figma REST API (version history + comments) + Asana Tasks API, deployed to Vercel with hourly KV cache.
+Built for design leads and ops managers who need real-time visibility into what's actually happening, not just what's in a standup.
 
-**Phase 2** — MCP server exposing Figma + Asana tools for Claude Code and claude.ai.
+---
+
+## What It Does
+
+**Phase 1 — Live Dashboard** (Next.js + Vercel)
+A password-protected, mobile-responsive dashboard that syncs Figma version history and Asana tasks into six intelligence views: Activity, Tasks, Pressure, Workload, Trends, and Flags.
+
+**Phase 2 — MCP Server** (Claude Code + claude.ai)
+Eight tools that let Claude query your design ops data directly — ask natural language questions about team workload, client pressure, overdue tasks, and weekly summaries.
+
+---
+
+## Dashboard Views
+
+### Activity
+Designer leaderboard ranked by a composite score (`edits×3 + comments×2 + files×2 + projects×3`). Shows per-designer edits, comments, and files touched. Includes a "Hottest Files" section ranking files by heat score (`edits×3 + comments`), with clickable links to Figma.
+
+### Tasks
+Delivery metrics at a glance — tasks completed (30d), on-time rate, average cycle time, and week-over-week velocity. Breaks down tasks by project (bar chart), assignee (with overdue counts), and creative type (with progress bars).
+
+### Pressure
+Client Pressure Index — cross-references Asana task load against Figma edit volume per client. Formula: `tasks + overdue×3 − min(edits×0.3, tasks)`. Flags clients as High/Med/Low pressure with visual bars.
+
+### Workload
+Per-designer efficiency analysis — active tasks, overdue count, Figma edits, efficiency ratio (edits ÷ tasks), and cycle time. Flags "High load" (8+ tasks, <15 edits) and "High output" (efficiency >3×).
+
+### Trends
+Historical line charts (requires 2+ weekly syncs): tasks completed/week, average cycle time, on-time percentage, and total Figma edits over time.
+
+### Flags
+Operational alerts with severity levels (Danger, Warn, Ok, Info):
+- **Overdue clustering** — client with 3+ overdue tasks
+- **Bus factor** — client served by a single designer with 3+ tasks
+- **Zero-edit designers** — 5+ tasks but 0 Figma edits
+- **High load imbalance** — 8+ tasks with <15 edits
+- **Velocity drop** — 50%+ week-over-week decline
+- **Stale overdue** — tasks 14+ days past due
+- **No Figma activity** — client with 3+ tasks but no matching edits
+
+### Interactive Features
+- **Drill-down filtering** — click a designer to see only their clients/tasks, or click a client to see only their designers
+- **Deep linking** — all Asana tasks and Figma files are clickable links to their source
+- **Mobile responsive** — hamburger nav, drawer sidebar, stacked layouts at 768px
 
 ---
 
@@ -12,34 +54,43 @@ Figma × Asana cross-intelligence dashboard for design ops at D2E Labs / Market 
 
 ```
 design-intel/
-├── app/                      Next.js App Router
-│   ├── page.tsx              Dashboard entry
-│   ├── dashboard.tsx         Client component — fetches from API routes
-│   ├── api/figma/            Figma team activity route
-│   ├── api/asana/            Asana tasks route
-│   └── api/cache/            Cache status + bust endpoint
+├── app/
+│   ├── page.tsx                  Dashboard entry point
+│   ├── dashboard.tsx             Main dashboard UI (all 6 tabs)
+│   ├── layout.tsx                Root layout
+│   ├── login/page.tsx            Password login page
+│   └── api/
+│       ├── figma/route.ts        GET  — cached Figma activity
+│       ├── figma/sync/route.ts   POST — chunked Figma crawl
+│       ├── asana/route.ts        GET  — Asana tasks (open + completed)
+│       ├── auth/route.ts         POST — password verification
+│       ├── cache/route.ts        GET/DELETE — cache status + bust
+│       └── snapshots/route.ts    GET  — weekly trend data
 ├── lib/
-│   ├── figma.ts              Figma REST API client (PAT auth)
-│   ├── asana.ts              Asana API client + helpers
-│   ├── cache.ts              Vercel KV cache layer (1hr TTL)
-│   └── auth.ts               API route bearer token guard
-├── mcp/                      Phase 2 MCP server (TypeScript)
+│   ├── figma.ts                  Figma REST API client (PAT auth)
+│   ├── asana.ts                  Asana API client with pagination
+│   ├── cache.ts                  Vercel KV cache layer (1hr TTL)
+│   ├── auth.ts                   API route bearer token guard
+│   └── metrics.ts                Delivery analytics + weekly snapshots
+├── mcp/
 │   └── src/
-│       ├── index.ts          Entry point — HTTP or stdio transport
+│       ├── index.ts              MCP server (stdio or HTTP transport)
+│       ├── constants.ts          Name mappings (Asana ↔ Figma)
 │       ├── tools/
-│       │   ├── figma-tools.ts        figma_get_team_activity, figma_get_designer_stats
-│       │   ├── asana-tools.ts        asana_get_tasks, asana_get_overdue, asana_get_projects
-│       │   └── intel-tools.ts        intel_client_pressure, intel_workload_balance, intel_weekly_summary
+│       │   ├── figma-tools.ts    figma_get_team_activity, figma_get_designer_stats
+│       │   ├── asana-tools.ts    asana_get_tasks, asana_get_overdue, asana_get_projects
+│       │   └── intel-tools.ts    intel_client_pressure, intel_workload_balance, intel_weekly_summary
 │       └── services/
-│           ├── figma.ts      Figma API calls + aggregation
-│           ├── asana.ts      Asana API calls + helpers
-│           └── format.ts     Markdown table, truncation, labels
-└── .env.local.example        Copy to .env.local and fill in values
+│           ├── figma.ts          Figma API calls + aggregation
+│           ├── asana.ts          Asana API calls + helpers
+│           └── format.ts         Markdown tables, truncation, labels
+├── middleware.ts                 Password gate (cookie-based auth)
+└── .env.local.example            Environment variable template
 ```
 
 ---
 
-## Phase 1 Setup — Live Dashboard
+## Setup
 
 ### 1. Clone + install
 
@@ -55,35 +106,93 @@ npm install
 cp .env.local.example .env.local
 ```
 
-Fill in `.env.local`:
-
-| Variable | Where to get it |
-|----------|----------------|
-| `FIGMA_PAT` | figma.com/settings → Personal access tokens |
-| `FIGMA_TEAM_IDS` | Your team ID from the Figma URL: `figma.com/files/team/TEAM_ID/...` |
-| `ASANA_PAT` | app.asana.com/0/my-apps → Personal access tokens |
-| `ASANA_WORKSPACE_GID` | Visit app.asana.com/api/1.0/workspaces while logged in |
-| `API_SECRET` | `openssl rand -hex 32` |
+| Variable | Required | Where to get it |
+|----------|----------|----------------|
+| `FIGMA_PAT` | Yes | figma.com/settings → Personal access tokens |
+| `FIGMA_TEAM_IDS` | Yes | Figma URL: `figma.com/files/team/TEAM_ID/...` (comma-separated) |
+| `ASANA_PAT` | Yes | app.asana.com/0/my-apps → Personal access tokens |
+| `ASANA_WORKSPACE_GID` | Yes | Visit `app.asana.com/api/1.0/workspaces` while logged in |
+| `API_SECRET` | Yes | `openssl rand -hex 32` — protects API routes |
+| `DASHBOARD_PASSWORD` | No | Set to require login; leave empty for open access |
+| `NEXT_PUBLIC_APP_URL` | No | Your Vercel deployment URL (set after first deploy) |
 
 ### 3. Deploy to Vercel
 
 ```bash
 npm install -g vercel
-vercel          # first deploy — confirms your project URL
+vercel
 ```
 
-After the first deploy:
-1. Copy the Vercel URL (e.g. `design-intel-mu.vercel.app`)
-2. Update `NEXT_PUBLIC_APP_URL` in Vercel env vars + `.env.local`
+After the first deploy, copy the Vercel URL and set `NEXT_PUBLIC_APP_URL` in Vercel env vars.
 
-### 4. Attach Vercel KV (hourly cache)
+### 4. Attach Vercel KV
 
-In the Vercel dashboard → Storage → Create KV store → attach to this project.
-Vercel auto-injects `KV_REST_API_URL` and `KV_REST_API_TOKEN`.
+In the Vercel dashboard → Storage → Create KV store → attach to this project. Vercel auto-injects `KV_REST_API_URL` and `KV_REST_API_TOKEN`.
+
+### 5. Run locally (dev)
+
+```bash
+npm run dev
+```
 
 ---
 
-## Phase 2 Setup — MCP Server
+## How It Works
+
+### Figma Sync
+
+The dashboard crawls Figma using standard REST API endpoints (no Enterprise plan required):
+
+```
+Team → Projects → Files → Version History + Comments
+```
+
+- **Version history** → who saved changes, when (maps to "edits")
+- **Comments** → who reviewed or gave feedback
+- **File/project structure** → which files and projects each designer touched
+
+The sync runs in chunks to stay within Vercel's 60-second free tier limit and respects Figma's 20 req/min rate limit with built-in delays.
+
+### Asana Integration
+
+Pulls tasks with full metadata: assignee, due dates, completion status, custom fields (Task Progress, Type of Creative, Total ASINs), and project memberships. Supports pagination for large workspaces.
+
+### Caching
+
+| Data | TTL |
+|------|-----|
+| Standard requests | 1 hour |
+| Figma sync results | 24 hours |
+| Completed tasks | 6 hours |
+| Weekly snapshots | 90 days |
+
+Cache can be busted manually via the dashboard refresh button or `DELETE /api/cache`.
+
+### Name Mapping
+
+Figma and Asana use different display names for the same people. The mapping lives in `mcp/src/constants.ts` (MCP) and `app/dashboard.tsx` (dashboard). Update both when team members change.
+
+---
+
+## API Routes
+
+All routes require `Authorization: Bearer <API_SECRET>` header.
+
+| Route | Method | Description |
+|-------|--------|-------------|
+| `/api/figma` | GET | Cached Figma designer activity |
+| `/api/figma/sync` | POST | Trigger chunked Figma crawl (projects → files → versions) |
+| `/api/asana` | GET | Asana tasks. Params: `modified_since`, `project`, `include_completed`, `force` |
+| `/api/auth` | POST | Password login — sets auth cookie |
+| `/api/cache` | GET | Cache timestamps (last Figma/Asana fetch times) |
+| `/api/cache` | DELETE | Bust cache — forces re-fetch on next request |
+| `/api/snapshots` | GET | Last 12 weekly snapshots for trend charts |
+
+---
+
+## MCP Server (Phase 2)
+
+### Build + run
 
 ```bash
 cd mcp
@@ -91,13 +200,13 @@ npm install
 npm run build
 ```
 
-### Run locally (stdio — for Claude Code)
+### stdio mode (Claude Code)
 
 ```bash
 FIGMA_PAT=xxx FIGMA_TEAM_IDS=xxx ASANA_PAT=xxx ASANA_WORKSPACE_GID=xxx node dist/index.js
 ```
 
-Add to `~/.claude/claude_desktop_config.json` (Claude Code):
+Add to your Claude Code MCP config (`~/.claude/claude_desktop_config.json`):
 
 ```json
 {
@@ -116,72 +225,35 @@ Add to `~/.claude/claude_desktop_config.json` (Claude Code):
 }
 ```
 
-### Run as HTTP server (for claude.ai remote MCP)
+### HTTP mode (remote / claude.ai)
 
 ```bash
 TRANSPORT=http PORT=3001 node mcp/dist/index.js
 ```
 
-Or deploy the `/mcp` directory to a separate Vercel project / Railway instance.
+Deploy the `/mcp` directory to Vercel, Railway, or any Node.js host.
+
+### Available Tools
+
+| Tool | What it answers |
+|------|----------------|
+| `figma_get_team_activity` | "What has each designer been working on this week?" |
+| `figma_get_designer_stats` | "Who are the most active designers this month?" |
+| `asana_get_tasks` | "What are Nicole's open tasks?" / "Show me overdue tasks on Project X" |
+| `asana_get_overdue` | "What's overdue right now, sorted by urgency?" |
+| `asana_get_projects` | "What projects exist in the workspace?" |
+| `intel_client_pressure` | "Which clients are under the most pressure?" |
+| `intel_workload_balance` | "Who's overloaded vs. who has capacity?" |
+| `intel_weekly_summary` | "Give me a standup-ready ops brief for this week" |
+
+All tools return markdown tables and support name-based filtering (partial match).
 
 ---
 
-## API Routes
+## Tech Stack
 
-| Route | Method | Description |
-|-------|--------|-------------|
-| `/api/figma` | GET | Fetch Figma team activity (designer edits + comments). Params: `start`, `end` (unix), `force` |
-| `/api/asana` | GET | Fetch Asana tasks. Params: `modified_since`, `project`, `force` |
-| `/api/cache` | GET | Cache timestamps (last fetch times) |
-| `/api/cache` | DELETE | Bust cache — forces re-fetch on next request |
-
-All routes require `Authorization: Bearer <API_SECRET>` header.
-
----
-
-## MCP Tools
-
-| Tool | Description |
-|------|-------------|
-| `figma_get_team_activity` | Per-designer edits and comments by date range |
-| `figma_get_designer_stats` | Aggregated scores: edits, comments, files, projects |
-| `asana_get_tasks` | Open tasks with filters: project, assignee, overdue, modified_since |
-| `asana_get_overdue` | All overdue tasks sorted by most overdue |
-| `asana_get_projects` | List all workspace projects with GIDs |
-| `intel_client_pressure` | Client Pressure Index: task load vs Figma edit volume |
-| `intel_workload_balance` | Designer workload: Asana tasks vs Figma output + efficiency |
-| `intel_weekly_summary` | Full design ops digest — designed for standup/exec reporting |
-
----
-
-## How It Works
-
-The Figma integration crawls the team hierarchy using standard REST API endpoints (no Enterprise plan required):
-
-```
-Team → Projects → Files → Version History + Comments
-```
-
-Designer activity is derived from:
-- **Version history**: who saved changes, when (maps to "edits")
-- **Comments**: who reviewed/gave feedback (maps to "comments")
-- **File/project structure**: which files and projects each designer touched
-
-**Designer Score** = edits×3 + comments×2 + files×2 + projects×3
-
----
-
-## Name Mapping
-
-Asana and Figma use different display names for the same people.
-The mapping lives in `mcp/src/constants.ts`.
-Update if team members change names.
-
----
-
-## Refreshing Data
-
-- **Auto**: Dashboard fetches on load, caches for 1 hour via Vercel KV
-- **Manual**: Click "↺ Refresh now" in the dashboard top bar
-- **Force via API**: `DELETE /api/cache` then reload
-- **MCP tools**: Always pull live from APIs (no cache layer in MCP)
+- **Frontend**: Next.js 14 (App Router), React 18, Recharts, Tailwind-style inline CSS
+- **Backend**: Next.js API routes, Vercel KV (Redis)
+- **APIs**: Figma REST API (PAT auth), Asana Tasks API (PAT auth)
+- **MCP**: TypeScript, stdio + HTTP transport
+- **Deploy**: Vercel (free tier compatible with chunked sync)
