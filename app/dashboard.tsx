@@ -160,6 +160,20 @@ function figmaFileUrl(key: string, name: string): string {
   return `https://www.figma.com/design/${key}/${slug}`;
 }
 
+// ── useIsMobile Hook ──────────────────────────────────────────────────────────
+
+function useIsMobile(breakpoint = 768): boolean {
+  const [isMobile, setIsMobile] = useState(false);
+  useEffect(() => {
+    const mq = window.matchMedia(`(max-width: ${breakpoint}px)`);
+    setIsMobile(mq.matches);
+    const handler = (e: MediaQueryListEvent) => setIsMobile(e.matches);
+    mq.addEventListener("change", handler);
+    return () => mq.removeEventListener("change", handler);
+  }, [breakpoint]);
+  return isMobile;
+}
+
 // ── Dashboard Entry ───────────────────────────────────────────────────────────
 
 export default function DesignIntelDashboard() {
@@ -286,7 +300,6 @@ function StatPill({ label, value, color }: { label: string; value: string | numb
   return (
     <div style={{
       background: SURFACE, borderRadius: 8, padding: "12px 16px",
-      flex: 1, minWidth: 120,
     }}>
       <div style={{ fontSize: 11, fontWeight: 500, color: T3, marginBottom: 4 }}>{label}</div>
       <div style={{ fontSize: 22, fontWeight: 600, color: color ?? T1, letterSpacing: -0.5 }}>
@@ -298,15 +311,16 @@ function StatPill({ label, value, color }: { label: string; value: string | numb
 
 // ── Tab Button ────────────────────────────────────────────────────────────────
 
-function Tab({ label, active, onClick }: { label: string; active: boolean; onClick: () => void }) {
+function Tab({ label, active, onClick, compact }: { label: string; active: boolean; onClick: () => void; compact?: boolean }) {
   return (
     <button onClick={onClick} style={{
       background: "none", border: "none", cursor: "pointer",
-      padding: "8px 0", marginRight: 24,
+      padding: "8px 0", marginRight: compact ? 16 : 24,
       fontSize: 13, fontWeight: 500, fontFamily: FONT,
       color: active ? T1 : T3,
       borderBottom: active ? `2px solid ${BLUE}` : "2px solid transparent",
       transition: "all 0.15s",
+      whiteSpace: "nowrap",
     }}>{label}</button>
   );
 }
@@ -363,6 +377,8 @@ function DashboardShell({
   activeTab: string;
   setActiveTab: (t: "activity" | "tasks" | "pressure" | "workload" | "trends" | "flags") => void;
 }) {
+  const isMobile = useIsMobile();
+  const [sidebarOpen, setSidebarOpen] = useState(false);
   const [selectedDesigner, setSelectedDesigner] = useState<string | null>(null);
   const [selectedClient, setSelectedClient] = useState<string | null>(null);
   const hasLiveData = source.figmaFiles.some(f => f === "Live");
@@ -757,12 +773,47 @@ function DashboardShell({
         ::-webkit-scrollbar-thumb { background: ${ELEVATED}; border-radius: 3px; }
         ::-webkit-scrollbar-thumb:hover { background: ${HOVER}; }
         button:hover { opacity: 0.85; }
+        .di-tab-scroll::-webkit-scrollbar { display: none; }
+        .di-tab-scroll { scrollbar-width: none; }
+        .di-scroll-x { -webkit-overflow-scrolling: touch; }
+        .di-scroll-x::-webkit-scrollbar { height: 3px; }
+        .di-scroll-x::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.1); border-radius: 2px; }
       `}</style>
+
+      {/* ── Hamburger (mobile) ── */}
+      {isMobile && !sidebarOpen && (
+        <button onClick={() => setSidebarOpen(true)} style={{
+          position: "fixed", top: 10, left: 10, zIndex: 1100,
+          width: 36, height: 36, borderRadius: 8,
+          background: SURFACE, border: `1px solid ${DIVIDER}`,
+          cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center",
+        }}>
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke={T2} strokeWidth="2">
+            <line x1="3" y1="6" x2="21" y2="6" />
+            <line x1="3" y1="12" x2="21" y2="12" />
+            <line x1="3" y1="18" x2="21" y2="18" />
+          </svg>
+        </button>
+      )}
+
+      {/* ── Backdrop (mobile) ── */}
+      {isMobile && sidebarOpen && (
+        <div onClick={() => setSidebarOpen(false)} style={{
+          position: "fixed", inset: 0, zIndex: 1200,
+          background: "rgba(0,0,0,0.5)",
+        }} />
+      )}
 
       {/* ── Sidebar ── */}
       <div style={{
-        width: 240, background: SURFACE, borderRight: `1px solid ${DIVIDER}`,
+        width: isMobile ? 250 : 240, background: SURFACE, borderRight: `1px solid ${DIVIDER}`,
         display: "flex", flexDirection: "column", flexShrink: 0,
+        ...(isMobile ? {
+          position: "fixed" as const, top: 0, bottom: 0,
+          left: sidebarOpen ? 0 : -250,
+          zIndex: 1300,
+          transition: "left 0.2s ease",
+        } : {}),
       }}>
         {/* Logo */}
         <div style={{
@@ -792,7 +843,7 @@ function DashboardShell({
             { id: "trends", label: "Trends", icon: "◈" },
             { id: "flags", label: `Flags${flags.length > 0 && flags[0].type !== "ok" ? ` (${flags.length})` : ""}`, icon: "⚑" },
           ] as const).map(item => (
-            <button key={item.id} onClick={() => setActiveTab(item.id)} style={{
+            <button key={item.id} onClick={() => { setActiveTab(item.id); if (isMobile) setSidebarOpen(false); }} style={{
               display: "flex", alignItems: "center", gap: 8,
               width: "100%", padding: "7px 8px", marginBottom: 1,
               background: activeTab === item.id ? ELEVATED : "transparent",
@@ -814,6 +865,7 @@ function DashboardShell({
               <button key={d.name} onClick={() => {
                 setSelectedClient(null);
                 setSelectedDesigner(prev => prev === d.name ? null : d.name);
+                if (isMobile) setSidebarOpen(false);
               }} style={{
                 display: "flex", alignItems: "center", gap: 8,
                 padding: "5px 8px", borderRadius: 6, width: "100%",
@@ -841,6 +893,7 @@ function DashboardShell({
                 <button key={c.name} onClick={() => {
                   setSelectedDesigner(null);
                   setSelectedClient(prev => prev === c.name ? null : c.name);
+                  if (isMobile) setSidebarOpen(false);
                 }} style={{
                   display: "flex", alignItems: "center", justifyContent: "space-between",
                   gap: 8, padding: "5px 8px", borderRadius: 6, width: "100%",
@@ -879,18 +932,26 @@ function DashboardShell({
       <div style={{ flex: 1, overflow: "auto" }}>
         {/* Header bar */}
         <div style={{
-          padding: "12px 24px", borderBottom: `1px solid ${DIVIDER}`,
-          display: "flex", alignItems: "center", justifyContent: "space-between",
+          padding: isMobile ? "12px 12px" : "12px 24px",
+          paddingLeft: isMobile ? 56 : 24,
+          borderBottom: `1px solid ${DIVIDER}`,
+          display: "flex", flexDirection: isMobile ? "column" : "row",
+          alignItems: isMobile ? "stretch" : "center",
+          justifyContent: "space-between",
+          gap: isMobile ? 8 : 0,
         }}>
-          <div style={{ display: "flex", alignItems: "center" }}>
-            <Tab label="Activity" active={activeTab === "activity"} onClick={() => setActiveTab("activity")} />
-            <Tab label="Tasks" active={activeTab === "tasks"} onClick={() => setActiveTab("tasks")} />
-            <Tab label="Client Pressure" active={activeTab === "pressure"} onClick={() => setActiveTab("pressure")} />
-            <Tab label="Workload" active={activeTab === "workload"} onClick={() => setActiveTab("workload")} />
-            <Tab label="Trends" active={activeTab === "trends"} onClick={() => setActiveTab("trends")} />
-            <Tab label={`Flags${flags.length > 0 && flags[0].type !== "ok" ? ` (${flags.length})` : ""}`} active={activeTab === "flags"} onClick={() => setActiveTab("flags")} />
+          <div className="di-tab-scroll" style={{
+            display: "flex", alignItems: "center",
+            ...(isMobile ? { overflowX: "auto" as const } : {}),
+          }}>
+            <Tab label="Activity" active={activeTab === "activity"} onClick={() => setActiveTab("activity")} compact={isMobile} />
+            <Tab label="Tasks" active={activeTab === "tasks"} onClick={() => setActiveTab("tasks")} compact={isMobile} />
+            <Tab label="Client Pressure" active={activeTab === "pressure"} onClick={() => setActiveTab("pressure")} compact={isMobile} />
+            <Tab label="Workload" active={activeTab === "workload"} onClick={() => setActiveTab("workload")} compact={isMobile} />
+            <Tab label="Trends" active={activeTab === "trends"} onClick={() => setActiveTab("trends")} compact={isMobile} />
+            <Tab label={`Flags${flags.length > 0 && flags[0].type !== "ok" ? ` (${flags.length})` : ""}`} active={activeTab === "flags"} onClick={() => setActiveTab("flags")} compact={isMobile} />
           </div>
-          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 8, flexShrink: 0 }}>
             {(selectedDesigner || selectedClient) && (
               <>
                 {selectedDesigner && (
@@ -935,7 +996,13 @@ function DashboardShell({
         </div>
 
         {/* Stats */}
-        <div style={{ padding: "20px 24px", display: "flex", gap: 12, flexWrap: "wrap", animation: "fadeIn 0.3s ease" }}>
+        <div style={{
+          padding: isMobile ? "16px 12px" : "20px 24px",
+          display: "grid",
+          gridTemplateColumns: isMobile ? "1fr 1fr" : "repeat(6, 1fr)",
+          gap: 12,
+          animation: "fadeIn 0.3s ease",
+        }}>
           <StatPill label="Team members" value={designers.length} color={BLUE} />
           <StatPill label="Figma edits" value={designers.reduce((s, d) => s + d.edits, 0)} />
           <StatPill label="Comments" value={designers.reduce((s, d) => s + d.comments, 0)} />
@@ -945,12 +1012,13 @@ function DashboardShell({
         </div>
 
         {/* Tab Content */}
-        <div style={{ padding: "0 24px 24px", animation: "fadeIn 0.2s ease" }}>
+        <div style={{ padding: isMobile ? "0 12px 24px" : "0 24px 24px", animation: "fadeIn 0.2s ease" }}>
 
           {/* ── Activity Tab ── */}
           {activeTab === "activity" && (
             <div>
-            <div style={{ background: SURFACE, borderRadius: 8, border: `1px solid ${DIVIDER}`, overflow: "hidden" }}>
+            <div className={isMobile ? "di-scroll-x" : undefined} style={isMobile ? { overflowX: "auto" } : undefined}>
+            <div style={{ background: SURFACE, borderRadius: 8, border: `1px solid ${DIVIDER}`, overflow: "hidden", minWidth: isMobile ? 520 : undefined }}>
               <div style={{
                 display: "grid", gridTemplateColumns: "40px 1fr 80px 80px 80px 64px",
                 padding: "10px 16px", fontSize: 11, fontWeight: 500, color: T3,
@@ -991,10 +1059,12 @@ function DashboardShell({
                 </div>
               ))}
             </div>
+            </div>
 
             {/* File Intelligence */}
             {hotFiles.length > 0 && (
-              <div style={{ background: SURFACE, borderRadius: 8, border: `1px solid ${DIVIDER}`, overflow: "hidden", marginTop: 16 }}>
+              <div className={isMobile ? "di-scroll-x" : undefined} style={{ marginTop: 16, ...(isMobile ? { overflowX: "auto" } : {}) }}>
+              <div style={{ background: SURFACE, borderRadius: 8, border: `1px solid ${DIVIDER}`, overflow: "hidden", minWidth: isMobile ? 580 : undefined }}>
                 <div style={{ padding: "12px 16px", borderBottom: `1px solid ${DIVIDER}` }}>
                   <div style={{ fontSize: 12, fontWeight: 600, color: T2 }}>Hottest files</div>
                   <div style={{ fontSize: 11, color: T3, marginTop: 2 }}>Ranked by heat score (edits ×3 + comments)</div>
@@ -1036,6 +1106,7 @@ function DashboardShell({
                   </div>
                 ))}
               </div>
+              </div>
             )}
             </div>
           )}
@@ -1044,7 +1115,7 @@ function DashboardShell({
           {activeTab === "tasks" && (
             <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
               {/* Delivery metrics row */}
-              <div style={{ display: "flex", gap: 12 }}>
+              <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr 1fr" : "repeat(4, 1fr)", gap: 12 }}>
                 <StatPill label="Completed (30d)" value={deliveryMetrics.total} color={GREEN} />
                 <StatPill
                   label="On-time rate"
@@ -1061,7 +1132,7 @@ function DashboardShell({
                   color={deliveryMetrics.weekDelta > 0 ? GREEN : deliveryMetrics.weekDelta < 0 ? RED : undefined}
                 />
               </div>
-            <div style={{ display: "flex", gap: 16 }}>
+            <div style={{ display: "flex", flexDirection: isMobile ? "column" : "row", gap: 16 }}>
               <div style={{ flex: 1, background: SURFACE, borderRadius: 8, border: `1px solid ${DIVIDER}`, padding: 16 }}>
                 <div style={{ fontSize: 12, fontWeight: 600, color: T2, marginBottom: 12 }}>Tasks by project</div>
                 {filteredTaskStats.topProjects.length > 0 && (
@@ -1083,7 +1154,7 @@ function DashboardShell({
                   </div>
                 )}
               </div>
-              <div style={{ width: 340, background: SURFACE, borderRadius: 8, border: `1px solid ${DIVIDER}`, padding: 16 }}>
+              <div style={{ width: isMobile ? "auto" : 340, background: SURFACE, borderRadius: 8, border: `1px solid ${DIVIDER}`, padding: 16 }}>
                 <div style={{ fontSize: 12, fontWeight: 600, color: T2, marginBottom: 12 }}>By assignee</div>
                 {filteredTaskStats.topAssignees.map(a => (
                   <div key={a.name} style={{
@@ -1111,7 +1182,7 @@ function DashboardShell({
                   {creativeTypes.filter(t => t.type !== "Other").map(t => {
                     const pct = creativeTypes[0].total > 0 ? Math.round((t.total / creativeTypes[0].total) * 100) : 0;
                     return (
-                      <div key={t.type} style={{ flex: "1 1 180px", minWidth: 160, background: ELEVATED, borderRadius: 6, padding: "10px 12px" }}>
+                      <div key={t.type} style={{ flex: isMobile ? "1 1 100%" : "1 1 180px", minWidth: isMobile ? undefined : 160, background: ELEVATED, borderRadius: 6, padding: "10px 12px" }}>
                         <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 4 }}>
                           <span style={{ fontSize: 12, fontWeight: 500, color: T1 }}>{t.type}</span>
                           <span style={{ fontSize: 11, color: T3 }}>{t.total}</span>
@@ -1135,7 +1206,8 @@ function DashboardShell({
 
           {/* ── Pressure Tab ── */}
           {activeTab === "pressure" && (
-            <div style={{ background: SURFACE, borderRadius: 8, border: `1px solid ${DIVIDER}`, overflow: "hidden" }}>
+            <div className={isMobile ? "di-scroll-x" : undefined} style={isMobile ? { overflowX: "auto" } : undefined}>
+            <div style={{ background: SURFACE, borderRadius: 8, border: `1px solid ${DIVIDER}`, overflow: "hidden", minWidth: isMobile ? 480 : undefined }}>
               <div style={{
                 display: "grid", gridTemplateColumns: "1fr 70px 70px 70px 80px",
                 padding: "10px 16px", fontSize: 11, fontWeight: 500, color: T3,
@@ -1173,11 +1245,13 @@ function DashboardShell({
                 );
               })}
             </div>
+            </div>
           )}
 
           {/* ── Workload Tab ── */}
           {activeTab === "workload" && (
-            <div style={{ background: SURFACE, borderRadius: 8, border: `1px solid ${DIVIDER}`, overflow: "hidden" }}>
+            <div className={isMobile ? "di-scroll-x" : undefined} style={isMobile ? { overflowX: "auto" } : undefined}>
+            <div style={{ background: SURFACE, borderRadius: 8, border: `1px solid ${DIVIDER}`, overflow: "hidden", minWidth: isMobile ? 620 : undefined }}>
               <div style={{
                 display: "grid", gridTemplateColumns: "1fr 64px 64px 64px 64px 72px 100px",
                 padding: "10px 16px", fontSize: 11, fontWeight: 500, color: T3,
@@ -1228,6 +1302,7 @@ function DashboardShell({
                 );
               })}
             </div>
+            </div>
           )}
 
           {/* ── Trends Tab ── */}
@@ -1245,7 +1320,7 @@ function DashboardShell({
                   </div>
                 </div>
               ) : (
-                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
+                <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "1fr 1fr", gap: 16 }}>
                   {/* Tasks Completed / Week */}
                   <div style={{ background: SURFACE, borderRadius: 8, border: `1px solid ${DIVIDER}`, padding: 16 }}>
                     <div style={{ fontSize: 12, fontWeight: 600, color: T2, marginBottom: 12 }}>Tasks completed / week</div>
@@ -1326,7 +1401,7 @@ function DashboardShell({
           {activeTab === "flags" && (
             <div>
               {/* Flags grid */}
-              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 24 }}>
+              <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "1fr 1fr", gap: 12, marginBottom: 24 }}>
                 {flags.map((flag, i) => {
                   const colors = {
                     danger: { bg: "rgba(242,72,34,0.08)", border: "rgba(242,72,34,0.3)", label: RED, badge: "rgba(242,72,34,0.15)" },
@@ -1376,7 +1451,8 @@ function DashboardShell({
                 <div>
                   <div style={{ fontSize: 13, fontWeight: 600, color: T1, marginBottom: 4 }}>Overdue × Figma Activity</div>
                   <div style={{ fontSize: 11, color: T3, marginBottom: 12 }}>Overdue tasks cross-referenced with designer Figma activity on that client — "In Figma" means work exists but may not have shipped.</div>
-                  <div style={{ background: SURFACE, borderRadius: 8, border: `1px solid ${DIVIDER}`, overflow: "hidden" }}>
+                  <div className={isMobile ? "di-scroll-x" : undefined} style={isMobile ? { overflowX: "auto" } : undefined}>
+                  <div style={{ background: SURFACE, borderRadius: 8, border: `1px solid ${DIVIDER}`, overflow: "hidden", minWidth: isMobile ? 520 : undefined }}>
                     <div style={{
                       display: "grid", gridTemplateColumns: "2fr 1fr 80px 80px 90px",
                       padding: "10px 16px", fontSize: 11, fontWeight: 500, color: T3,
@@ -1415,6 +1491,7 @@ function DashboardShell({
                         </div>
                       </div>
                     ))}
+                  </div>
                   </div>
                 </div>
               )}
