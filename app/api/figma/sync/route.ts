@@ -48,7 +48,7 @@ interface SyncState {
   // Accumulated designer activity
   designers: Record<string, { edits: number; comments: number; files: string[]; projects: string[] }>;
   // Accumulated per-file stats
-  fileStats: Record<string, { project: string; edits: number; comments: number; designers: string[]; lastModified: string }>;
+  fileStats: Record<string, { key: string; project: string; edits: number; comments: number; designers: string[]; lastModified: string }>;
   // Hourly activity distribution (24 buckets, UTC)
   hourlyActivity: number[];
   updatedAt: string;
@@ -56,7 +56,7 @@ interface SyncState {
 
 interface SyncResult {
   data: FigmaDesignerActivity[];
-  files: Array<{ name: string; project: string; edits: number; comments: number; designers: string[]; lastModified: string }>;
+  files: Array<{ name: string; key: string; project: string; edits: number; comments: number; designers: string[]; lastModified: string }>;
   hourlyActivity: number[];
   syncedAt: string;
   startTime: number;
@@ -182,7 +182,7 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
       for (const file of chunk) {
         // Initialize per-file stats
         if (!state.fileStats[file.name]) {
-          state.fileStats[file.name] = { project: file.projectName, edits: 0, comments: 0, designers: [], lastModified: file.last_modified };
+          state.fileStats[file.name] = { key: file.key, project: file.projectName, edits: 0, comments: 0, designers: [], lastModified: file.last_modified };
         }
         const fs = state.fileStats[file.name];
 

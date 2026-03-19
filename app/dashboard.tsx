@@ -23,6 +23,7 @@ interface DesignerActivity {
 
 interface FigmaFileStats {
   name: string;
+  key?: string;
   project: string;
   edits: number;
   comments: number;
@@ -35,6 +36,7 @@ interface Flag {
   category: string;
   title: string;
   detail: string;
+  tasks?: Array<{ gid: string; name: string; due_on?: string; assignee?: string }>;
 }
 
 interface AsanaTask {
@@ -148,6 +150,15 @@ function fmt(n: number): string {
 
 function initials(name: string): string {
   return name.split(" ").map(w => w[0]).join("").toUpperCase().slice(0, 2);
+}
+
+function asanaTaskUrl(gid: string): string {
+  return `https://app.asana.com/0/0/${gid}`;
+}
+
+function figmaFileUrl(key: string, name: string): string {
+  const slug = name.replace(/[^a-zA-Z0-9]+/g, "-").replace(/^-|-$/g, "");
+  return `https://www.figma.com/design/${key}/${slug}`;
 }
 
 // ── Dashboard Entry ───────────────────────────────────────────────────────────
@@ -514,9 +525,12 @@ function DashboardShell({
     }
     for (const [client, count] of Object.entries(overdueByClient)) {
       if (count >= 3) {
+        const clientOverdueTasks = teamTasks.filter(t => isOverdue(t) && t.projects.some(p => p.name === client));
         f.push({ type: "danger", category: "Delivery",
           title: `${client}: ${count} overdue tasks`,
-          detail: `This client has ${count} tasks past their due date. Risk of missed deadlines escalating.` });
+          detail: `This client has ${count} tasks past their due date. Risk of missed deadlines escalating.`,
+          tasks: clientOverdueTasks.slice(0, 8).map(t => ({ gid: t.gid, name: t.name, due_on: t.due_on ?? undefined, assignee: t.assignee?.name ?? "Unassigned" })),
+        });
       }
     }
 
@@ -577,7 +591,9 @@ function DashboardShell({
     if (stale.length > 0) {
       f.push({ type: "danger", category: "Stale",
         title: `${stale.length} task${stale.length > 1 ? "s" : ""} overdue by 14+ days`,
-        detail: stale.slice(0, 5).map(t => `"${t.name}" (due ${t.due_on}) — ${t.assignee?.name ?? "Unassigned"}`).join(" · ") + (stale.length > 5 ? ` +${stale.length - 5} more` : "") });
+        detail: stale.slice(0, 5).map(t => `"${t.name}" (due ${t.due_on}) — ${t.assignee?.name ?? "Unassigned"}`).join(" · ") + (stale.length > 5 ? ` +${stale.length - 5} more` : ""),
+        tasks: stale.slice(0, 8).map(t => ({ gid: t.gid, name: t.name, due_on: t.due_on ?? undefined, assignee: t.assignee?.name ?? "Unassigned" })),
+      });
     }
 
     // Client with no Figma activity
@@ -609,6 +625,7 @@ function DashboardShell({
         taskClients.some(tc => fp.toLowerCase().includes(tc.toLowerCase()) || tc.toLowerCase().includes(fp.toLowerCase()))
       ) ?? [];
       return {
+        gid: t.gid,
         task: t.name,
         assignee: t.assignee?.name ?? "Unassigned",
         figmaName,
@@ -1024,7 +1041,18 @@ function DashboardShell({
                     padding: "8px 16px", alignItems: "center",
                     borderBottom: i < Math.min(hotFiles.length, 12) - 1 ? `1px solid ${DIVIDER}` : "none",
                   }}>
-                    <div style={{ fontSize: 12, fontWeight: 500, color: T1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", paddingRight: 8 }}>{f.name}</div>
+                    {f.key ? (
+                      <a href={figmaFileUrl(f.key, f.name)} target="_blank" rel="noopener noreferrer" style={{
+                        fontSize: 12, fontWeight: 500, color: BLUE, overflow: "hidden",
+                        textOverflow: "ellipsis", whiteSpace: "nowrap", display: "block",
+                        textDecoration: "none", paddingRight: 8,
+                      }}
+                      onMouseEnter={e => (e.currentTarget.style.textDecoration = "underline")}
+                      onMouseLeave={e => (e.currentTarget.style.textDecoration = "none")}
+                      >{f.name} <span style={{ fontSize: 10, opacity: 0.5 }}>↗</span></a>
+                    ) : (
+                      <div style={{ fontSize: 12, fontWeight: 500, color: T1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", paddingRight: 8 }}>{f.name}</div>
+                    )}
                     <div style={{ fontSize: 11, color: T3, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{f.project}</div>
                     <div style={{ textAlign: "right", fontSize: 12, color: T1 }}>{f.edits}</div>
                     <div style={{ textAlign: "right", fontSize: 12, color: T2 }}>{f.comments}</div>
@@ -1340,6 +1368,29 @@ function DashboardShell({
                       </div>
                       <div style={{ fontSize: 13, fontWeight: 600, color: T1, marginBottom: 6 }}>{flag.title}</div>
                       <div style={{ fontSize: 12, color: T2, lineHeight: 1.6 }}>{flag.detail}</div>
+                      {flag.tasks && flag.tasks.length > 0 && (
+                        <div style={{ marginTop: 10, display: "flex", flexDirection: "column", gap: 4 }}>
+                          {flag.tasks.map(t => (
+                            <a key={t.gid} href={asanaTaskUrl(t.gid)} target="_blank" rel="noopener noreferrer" style={{
+                              display: "flex", alignItems: "center", justifyContent: "space-between",
+                              fontSize: 11, color: BLUE, textDecoration: "none",
+                              padding: "4px 8px", borderRadius: 4,
+                              background: "rgba(13,153,255,0.06)",
+                              transition: "background 0.1s",
+                            }}
+                            onMouseEnter={e => (e.currentTarget.style.background = "rgba(13,153,255,0.14)")}
+                            onMouseLeave={e => (e.currentTarget.style.background = "rgba(13,153,255,0.06)")}
+                            >
+                              <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", flex: 1 }}>{t.name}</span>
+                              <span style={{ color: T3, marginLeft: 8, flexShrink: 0 }}>
+                                {t.due_on && <span style={{ color: RED, marginRight: 6 }}>{t.due_on}</span>}
+                                {t.assignee}
+                                <span style={{ marginLeft: 6, opacity: 0.5 }}>↗</span>
+                              </span>
+                            </a>
+                          ))}
+                        </div>
+                      )}
                     </div>
                   );
                 })}
@@ -1368,7 +1419,14 @@ function DashboardShell({
                         borderBottom: i < filteredOverdueOverlay.length - 1 ? `1px solid ${DIVIDER}` : "none",
                       }}>
                         <div>
-                          <div style={{ fontSize: 12, fontWeight: 500, color: T1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{t.task}</div>
+                          <a href={asanaTaskUrl(t.gid)} target="_blank" rel="noopener noreferrer" style={{
+                            fontSize: 12, fontWeight: 500, color: BLUE, overflow: "hidden",
+                            textOverflow: "ellipsis", whiteSpace: "nowrap", display: "block",
+                            textDecoration: "none", transition: "opacity 0.1s",
+                          }}
+                          onMouseEnter={e => (e.currentTarget.style.textDecoration = "underline")}
+                          onMouseLeave={e => (e.currentTarget.style.textDecoration = "none")}
+                          >{t.task} <span style={{ fontSize: 10, opacity: 0.5 }}>↗</span></a>
                           {t.type && <div style={{ fontSize: 10, color: T3, marginTop: 1 }}>{t.type}</div>}
                         </div>
                         <div style={{ fontSize: 12, color: T2 }}>{t.assignee}</div>
