@@ -20,7 +20,6 @@ interface FigmaFileStats {
 interface SyncResult {
   data: FigmaDesignerActivity[];
   files?: FigmaFileStats[];
-  hourlyActivity?: number[];
   syncedAt: string;
   startTime: number;
   endTime: number;
@@ -36,7 +35,6 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
     return NextResponse.json({
       data: cached.data,
       files: cached.files ?? [],
-      hourlyActivity: cached.hourlyActivity ?? [],
       source: "cache",
       syncedAt: cached.syncedAt,
     });

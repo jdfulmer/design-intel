@@ -49,15 +49,12 @@ interface SyncState {
   designers: Record<string, { edits: number; comments: number; files: string[]; projects: string[] }>;
   // Accumulated per-file stats
   fileStats: Record<string, { key: string; project: string; edits: number; comments: number; designers: string[]; lastModified: string }>;
-  // Hourly activity distribution (24 buckets, UTC)
-  hourlyActivity: number[];
   updatedAt: string;
 }
 
 interface SyncResult {
   data: FigmaDesignerActivity[];
   files: Array<{ name: string; key: string; project: string; edits: number; comments: number; designers: string[]; lastModified: string }>;
-  hourlyActivity: number[];
   syncedAt: string;
   startTime: number;
   endTime: number;
@@ -100,7 +97,6 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
         filesProcessed: 0,
         designers: {},
         fileStats: {},
-        hourlyActivity: new Array(24).fill(0),
         updatedAt: new Date().toISOString(),
       };
 
@@ -202,7 +198,6 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
             if (!d.projects.includes(file.projectName)) d.projects.push(file.projectName);
             fs.edits++;
             if (!fs.designers.includes(name)) fs.designers.push(name);
-            state.hourlyActivity[vDate.getUTCHours()]++;
           }
         }
 
@@ -222,7 +217,6 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
             if (!d.projects.includes(file.projectName)) d.projects.push(file.projectName);
             fs.comments++;
             if (!fs.designers.includes(name)) fs.designers.push(name);
-            state.hourlyActivity[cDate.getUTCHours()]++;
           }
         }
       }
@@ -244,7 +238,6 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
       await cacheSet("figma:latest-sync", {
         data: activity,
         files: fileStatsArr,
-        hourlyActivity: state.hourlyActivity,
         syncedAt: new Date().toISOString(),
         startTime: state.startTime,
         endTime: state.endTime,
