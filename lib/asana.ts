@@ -1,5 +1,7 @@
 // lib/asana.ts — Asana Tasks API client
 
+import { z } from 'zod';
+
 export interface AsanaTask {
   gid: string;
   name: string;
@@ -42,6 +44,11 @@ const TASK_FIELDS = [
   "dependencies.gid",
 ].join(",");
 
+const AsanaTasksResponse = z.object({
+  data: z.array(z.any()).default([]),
+  next_page: z.union([z.object({ offset: z.string() }), z.null()]).optional(),
+});
+
 function headers(): HeadersInit {
   const pat = process.env.ASANA_PAT;
   if (!pat) throw new Error("ASANA_PAT is not set");
@@ -60,6 +67,7 @@ export async function fetchAsanaTasks(options: {
   projectGid?: string;    // filter to a specific project
   assigneeGid?: string;   // filter to a specific assignee
   completedSince?: string; // "now" excludes completed, ISO date for since
+  maxResults?: number;     // cap on total results (default 1000)
 } = {}): Promise<AsanaTask[]> {
   const workspace = process.env.ASANA_WORKSPACE_GID;
   if (!workspace) throw new Error("ASANA_WORKSPACE_GID is not set");
@@ -82,6 +90,7 @@ export async function fetchAsanaTasks(options: {
     return allTasks;
   }
 
+  const maxResults = options.maxResults ?? 1000;
   const tasks: AsanaTask[] = [];
   let offset: string | undefined;
   let hasMore = true;
@@ -111,12 +120,23 @@ export async function fetchAsanaTasks(options: {
       throw new Error(`Asana API error ${res.status}: ${body}`);
     }
 
-    const data: { data: AsanaTask[]; next_page: { offset: string } | null } = await res.json();
+    const raw = await res.json();
+    const parsed = AsanaTasksResponse.safeParse(raw);
 
-    tasks.push(...data.data);
+    if (!parsed.success) {
+      console.warn('[asana] Response validation failed, returning empty array:', parsed.error.message);
+      return [];
+    }
 
-    if (data.next_page?.offset) {
-      offset = data.next_page.offset;
+    tasks.push(...parsed.data.data);
+
+    if (tasks.length >= maxResults) {
+      console.warn(`[asana] Reached maxResults cap (${maxResults}), stopping pagination`);
+      break;
+    }
+
+    if (parsed.data.next_page?.offset) {
+      offset = parsed.data.next_page.offset;
     } else {
       hasMore = false;
     }

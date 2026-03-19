@@ -15,7 +15,7 @@ import {
   fetchFileComments,
   type FigmaDesignerActivity,
 } from "@/lib/figma";
-import { cacheGet, cacheSet, setTimestamp, snapshotCacheKey } from "@/lib/cache";
+import { cacheGet, cacheSet, cacheSetWithTTL, cacheDel, setTimestamp, snapshotCacheKey } from "@/lib/cache";
 import { requireApiSecret } from "@/lib/auth";
 import { fetchAsanaTasks } from "@/lib/asana";
 import type { AsanaTask } from "@/lib/asana";
@@ -72,6 +72,22 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
   const guard = requireApiSecret(req);
   if (guard) return guard;
 
+  // Try to acquire sync lock (5 minute TTL)
+  const lockKey = 'figma:sync:lock' as 'figma:latest-sync';
+  const existingLock = await cacheGet<string>(lockKey);
+  if (existingLock) {
+    const lockAge = Date.now() - new Date(existingLock).getTime();
+    const STALE_LOCK_MS = 10 * 60 * 1000; // 10 minutes
+    if (lockAge < STALE_LOCK_MS) {
+      return NextResponse.json(
+        { error: 'Sync already in progress', lockedAt: existingLock },
+        { status: 409 }
+      );
+    }
+    console.warn(`[sync] Stale lock detected (${Math.round(lockAge / 1000)}s old), proceeding`);
+  }
+  await cacheSetWithTTL(lockKey, new Date().toISOString(), 5 * 60); // 5 min TTL
+
   try {
     let state = await cacheGet<SyncState>(STATE_KEY);
 
@@ -101,6 +117,7 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
       };
 
       await cacheSet(STATE_KEY, state);
+      await cacheDel(lockKey);
 
       return NextResponse.json({
         status: "started",
@@ -149,6 +166,7 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
       await cacheSet(STATE_KEY, state);
 
       if (indexingDone) {
+        await cacheDel(lockKey);
         return NextResponse.json({
           status: "indexing complete",
           filesFound: state.fileIndex.length,
@@ -157,6 +175,7 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
         });
       }
 
+      await cacheDel(lockKey);
       return NextResponse.json({
         status: "indexing projects",
         projectsIndexed: state.projectsIndexed,
@@ -253,6 +272,7 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
           console.warn("[sync] snapshot generation failed:", e);
         }
 
+        await cacheDel(lockKey);
         return NextResponse.json({
           status: "complete",
           designers: activity.length,
@@ -263,6 +283,7 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
         });
       }
 
+      await cacheDel(lockKey);
       return NextResponse.json({
         status: "processing files",
         filesProcessed: state.filesProcessed,
@@ -273,8 +294,10 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
       });
     }
 
+    await cacheDel(lockKey);
     return NextResponse.json({ status: "idle" });
   } catch (err) {
+    await cacheDel(lockKey);
     const message = err instanceof Error ? err.message : "Unknown error";
     console.error("[/api/figma/sync]", message);
     return NextResponse.json({ error: message }, { status: 500 });

@@ -1,5 +1,10 @@
 // middleware.ts — password gate for the dashboard
 import { NextRequest, NextResponse } from "next/server";
+import { createHmac, timingSafeEqual } from "crypto";
+
+function generateToken(password: string, secret: string): string {
+  return createHmac("sha256", secret).update(password).digest("hex");
+}
 
 export function middleware(req: NextRequest) {
   const password = process.env.DASHBOARD_PASSWORD;
@@ -20,11 +25,11 @@ export function middleware(req: NextRequest) {
   // Check for auth cookie
   const token = req.cookies.get("di_auth")?.value;
   if (token) {
-    // Verify: cookie value must match HMAC(password, secret)
-    // We can't do async crypto in middleware easily, so we use a simple
-    // comparison: the cookie stores a hash we set in /api/auth
-    const expected = simpleHash(password, process.env.API_SECRET ?? "di-salt");
-    if (token === expected) {
+    const expected = generateToken(password, process.env.API_SECRET ?? "di-salt");
+    // Timing-safe comparison to prevent timing attacks
+    const tokenBuf = Buffer.from(token);
+    const expectedBuf = Buffer.from(expected);
+    if (tokenBuf.length === expectedBuf.length && timingSafeEqual(tokenBuf, expectedBuf)) {
       return NextResponse.next();
     }
   }
@@ -34,20 +39,6 @@ export function middleware(req: NextRequest) {
   loginUrl.pathname = "/login";
   loginUrl.searchParams.set("from", pathname);
   return NextResponse.redirect(loginUrl);
-}
-
-// Simple hash — not crypto-grade but sufficient for a dashboard password cookie.
-// The real security boundary is the password itself; this just prevents
-// trivially guessing the cookie value.
-function simpleHash(password: string, salt: string): string {
-  let h = 0x811c9dc5; // FNV offset basis
-  const input = `${salt}:${password}`;
-  for (let i = 0; i < input.length; i++) {
-    h ^= input.charCodeAt(i);
-    h = Math.imul(h, 0x01000193); // FNV prime
-    h = h >>> 0; // keep unsigned
-  }
-  return h.toString(36);
 }
 
 export const config = {

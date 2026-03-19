@@ -1,5 +1,7 @@
 // lib/figma.ts — Figma REST API client (standard endpoints, PAT auth)
 
+import { z } from 'zod';
+
 export interface FigmaProject {
   id: string;
   name: string;
@@ -35,6 +37,51 @@ export interface FigmaDesignerActivity {
   projects: string[];
 }
 
+// ── Zod response schemas for API validation ──
+
+const FigmaProjectsResponse = z.object({
+  projects: z.array(z.object({
+    id: z.string(),
+    name: z.string(),
+  })).default([]),
+});
+
+const FigmaFilesResponse = z.object({
+  files: z.array(z.object({
+    key: z.string(),
+    name: z.string(),
+    last_modified: z.string(),
+    thumbnail_url: z.string().optional(),
+  })).default([]),
+});
+
+const FigmaVersionsResponse = z.object({
+  versions: z.array(z.object({
+    id: z.string(),
+    created_at: z.string(),
+    label: z.string(),
+    description: z.string(),
+    user: z.object({
+      id: z.string(),
+      handle: z.string(),
+      img_url: z.string(),
+    }),
+  })).default([]),
+});
+
+const FigmaCommentsResponse = z.object({
+  comments: z.array(z.object({
+    id: z.string(),
+    created_at: z.string(),
+    message: z.string(),
+    user: z.object({
+      id: z.string(),
+      handle: z.string(),
+      img_url: z.string(),
+    }),
+  })).default([]),
+});
+
 const FIGMA_API = "https://api.figma.com/v1";
 const REQUEST_DELAY_MS = 3200; // ~18 requests/min — stays under Figma's 20/min limit
 const MAX_FILES = 50;
@@ -68,42 +115,51 @@ function delay(ms: number): Promise<void> {
 }
 
 export async function fetchTeamProjects(teamId: string): Promise<FigmaProject[]> {
-  const data = await figmaFetch<{ projects: FigmaProject[] }>(
+  const raw = await figmaFetch<unknown>(
     `/teams/${teamId}/projects`
   );
-  return data.projects;
+  const parsed = FigmaProjectsResponse.safeParse(raw);
+  if (!parsed.success) {
+    console.warn(`[figma] fetchTeamProjects validation failed for team ${teamId}:`, parsed.error.message);
+    return [];
+  }
+  return parsed.data.projects;
 }
 
 export async function fetchProjectFiles(
   projectId: string
 ): Promise<FigmaFileInfo[]> {
-  const data = await figmaFetch<{
-    files: Array<{
-      key: string;
-      name: string;
-      last_modified: string;
-      thumbnail_url?: string;
-    }>;
-  }>(`/projects/${projectId}/files`);
-  return data.files;
+  const raw = await figmaFetch<unknown>(`/projects/${projectId}/files`);
+  const parsed = FigmaFilesResponse.safeParse(raw);
+  if (!parsed.success) {
+    console.warn(`[figma] fetchProjectFiles validation failed for project ${projectId}:`, parsed.error.message);
+    return [];
+  }
+  return parsed.data.files;
 }
 
 export async function fetchFileVersions(
   fileKey: string
 ): Promise<FigmaVersion[]> {
-  const data = await figmaFetch<{
-    versions: FigmaVersion[];
-  }>(`/files/${fileKey}/versions`);
-  return data.versions;
+  const raw = await figmaFetch<unknown>(`/files/${fileKey}/versions`);
+  const parsed = FigmaVersionsResponse.safeParse(raw);
+  if (!parsed.success) {
+    console.warn(`[figma] fetchFileVersions validation failed for file ${fileKey}:`, parsed.error.message);
+    return [];
+  }
+  return parsed.data.versions;
 }
 
 export async function fetchFileComments(
   fileKey: string
 ): Promise<FigmaComment[]> {
-  const data = await figmaFetch<{
-    comments: FigmaComment[];
-  }>(`/files/${fileKey}/comments`);
-  return data.comments;
+  const raw = await figmaFetch<unknown>(`/files/${fileKey}/comments`);
+  const parsed = FigmaCommentsResponse.safeParse(raw);
+  if (!parsed.success) {
+    console.warn(`[figma] fetchFileComments validation failed for file ${fileKey}:`, parsed.error.message);
+    return [];
+  }
+  return parsed.data.comments;
 }
 
 /**

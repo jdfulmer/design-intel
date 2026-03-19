@@ -57,6 +57,15 @@ export async function cacheDel(key: CacheKey): Promise<void> {
   }
 }
 
+export async function cacheSetWithTTL<T>(key: CacheKey, value: T, ttlSeconds: number): Promise<void> {
+  if (!isKVConfigured()) return;
+  try {
+    await kv.set(key, value, { ex: ttlSeconds });
+  } catch (e) {
+    console.warn(`[cache] set failed for ${key}:`, e);
+  }
+}
+
 export async function getTimestamps(): Promise<CacheTimestamps> {
   return (await cacheGet<CacheTimestamps>("cache:timestamps")) ?? {};
 }

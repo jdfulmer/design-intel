@@ -4,7 +4,7 @@ export const FIGMA_API = "https://api.figma.com/v1";
 export const ASANA_API = "https://app.asana.com/api/1.0";
 
 // Maps Asana full names → Figma display names (design team only)
-// Keep in sync with the dashboard DESIGN_TEAM map
+// SOURCE OF TRUTH: lib/team-config.ts — keep in sync
 export const ASANA_TO_FIGMA: Record<string, string> = {
   "Joshua Fulmer":      "Joshua Fulmer",
   "Nicole Howard":      "Nicole Howard",
@@ -30,6 +30,7 @@ export const FIGMA_TO_ASANA: Record<string, string> = Object.fromEntries(
 );
 
 // Asana project names that are intake/workflow boards, not client names
+// SOURCE OF TRUTH: lib/team-config.ts — keep in sync
 export const NON_CLIENT_PROJECTS = new Set([
   "Creative Intake",
   "Creative Tasks",

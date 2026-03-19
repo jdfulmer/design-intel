@@ -4,7 +4,12 @@ import { NextRequest, NextResponse } from "next/server";
 
 export function requireApiSecret(req: NextRequest): NextResponse | null {
   const secret = process.env.API_SECRET;
-  if (!secret) return null; // not configured — skip guard in dev
+  if (!secret) {
+    if (process.env.NODE_ENV === "production") {
+      throw new Error("API_SECRET is required in production but was not set");
+    }
+    return null; // not configured — skip guard in dev
+  }
 
   const auth = req.headers.get("authorization");
   const token = auth?.replace("Bearer ", "").trim();

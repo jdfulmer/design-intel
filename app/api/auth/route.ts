@@ -1,15 +1,9 @@
 // app/api/auth/route.ts — verify dashboard password and set auth cookie
 import { NextRequest, NextResponse } from "next/server";
+import { createHmac } from "crypto";
 
-function simpleHash(password: string, salt: string): string {
-  let h = 0x811c9dc5;
-  const input = `${salt}:${password}`;
-  for (let i = 0; i < input.length; i++) {
-    h ^= input.charCodeAt(i);
-    h = Math.imul(h, 0x01000193);
-    h = h >>> 0;
-  }
-  return h.toString(36);
+function generateToken(password: string, secret: string): string {
+  return createHmac("sha256", secret).update(password).digest("hex");
 }
 
 export async function POST(req: NextRequest): Promise<NextResponse> {
@@ -25,7 +19,7 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
     return NextResponse.json({ error: "Wrong password" }, { status: 401 });
   }
 
-  const token = simpleHash(expected, process.env.API_SECRET ?? "di-salt");
+  const token = generateToken(expected, process.env.API_SECRET ?? "di-salt");
 
   const res = NextResponse.json({ ok: true });
   res.cookies.set("di_auth", token, {

@@ -10,6 +10,10 @@ import {
   avgCycleTime, onTimeRate, throughput, topAlert,
   type WeeklySnapshot,
 } from "@/lib/metrics";
+import {
+  DESIGN_TEAM, TEAM_FIGMA_NAMES, TEAM_ASANA_NAMES,
+  toFigmaName, NON_CLIENT_PROJECTS,
+} from "@/lib/team-config";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -63,39 +67,11 @@ interface DataSource {
   mode: "api" | "csv" | "mixed" | "empty";
 }
 
-// ── Design Team ───────────────────────────────────────────────────────────────
-
-const DESIGN_TEAM: Record<string, string> = {
-  "Joshua Fulmer":      "Joshua Fulmer",
-  "Nicole Howard":      "Nicole Howard",
-  "Vince Herrera":      "Vincent Herrera",
-  "Abigail Roxas":      "Abigail Roxas",
-  "Bianca Louise Gran": "Bianca",
-  "Bianca Gran":        "Bianca",
-  "Dannah Gorospe":     "dannah",
-  "Enisa Celik":        "enisa",
-  "Kitz MR Amago":      "Kitz",
-  "Kitz Amago":         "Kitz",
-  "Ricardo Rodriguez":  "Ricardo",
-  "Rogerio Mitri":      "Roger Mitri",
-  "Roger Mitri":        "Roger Mitri",
-  "Ruth Quintana":      "Ruth",
-  "Ryann Bautista":     "Ryann",
-  "Ryann Christian":    "Ryann",
-};
-
-const TEAM_FIGMA_NAMES = new Set(Object.values(DESIGN_TEAM));
-const TEAM_ASANA_NAMES = new Set(Object.keys(DESIGN_TEAM));
+// Name mappings & NON_CLIENT_PROJECTS imported from @/lib/team-config
 
 function isTeamTask(task: AsanaTask): boolean {
   return task.assignee !== null && TEAM_ASANA_NAMES.has(task.assignee.name);
 }
-
-function toFigmaName(asanaName: string): string {
-  return DESIGN_TEAM[asanaName] ?? asanaName;
-}
-
-const NON_CLIENT_PROJECTS = new Set(["Creative Intake", "Creative Tasks", "General Tasks"]);
 
 // ── Theme Constants ──────────────────────────────────────────────────────────
 
@@ -301,36 +277,76 @@ export default function DesignIntelDashboard() {
   const fetchFromApi = useCallback(async (force = false) => {
     setRefreshing(true);
     setApiError(null);
-    try {
-      const headers: HeadersInit = {};
-      const secret = process.env.NEXT_PUBLIC_API_SECRET;
-      if (secret) headers["Authorization"] = `Bearer ${secret}`;
 
+    // Helper: classify a failed response or network error for a given source
+    function describeError(source: string, res?: Response): string {
+      if (!res) return `${source}: Network error \u2014 check your connection`;
+      if (res.status === 401) return `${source}: Authentication failed \u2014 check API credentials`;
+      if (res.status === 429) return `${source}: Rate limited \u2014 try again in a few minutes`;
+      if (res.status >= 500) return `${source}: Server error \u2014 Figma or Asana API may be down`;
+      return `${source}: Request failed (${res.status})`;
+    }
+
+    try {
+      const forceParam = force ? "&force=true" : "";
       const [figmaRes, asanaRes, completedRes, snapshotsRes, cacheRes] = await Promise.allSettled([
-        fetch(`/api/figma${force ? "?force=true" : ""}`, { headers }),
-        fetch(`/api/asana${force ? "?force=true" : ""}`, { headers }),
-        fetch(`/api/asana?include_completed=30d${force ? "&force=true" : ""}`, { headers }),
-        fetch("/api/snapshots", { headers }),
-        fetch("/api/cache", { headers }),
+        fetch(`/api/data?source=figma${forceParam}`),
+        fetch(`/api/data?source=asana${forceParam}`),
+        fetch(`/api/data?source=completed&include_completed=30d${forceParam}`),
+        fetch("/api/data?source=snapshots"),
+        fetch("/api/data?source=cache"),
       ]);
 
-      const figmaJson = figmaRes.status === "fulfilled" && figmaRes.value.ok
-        ? await figmaRes.value.json() : null;
-      const figmaData = figmaJson?.data as DesignerActivity[] | null ?? null;
-      const figmaFileData = (figmaJson?.files ?? []) as FigmaFileStats[];
-      const asanaData = asanaRes.status === "fulfilled" && asanaRes.value.ok
-        ? (await asanaRes.value.json()).data as AsanaTask[] : null;
+      // Collect per-source errors
+      const errors: string[] = [];
+
+      // Parse Figma
+      let figmaData: DesignerActivity[] | null = null;
+      let figmaFileData: FigmaFileStats[] = [];
+      if (figmaRes.status === "fulfilled") {
+        if (figmaRes.value.ok) {
+          const figmaJson = await figmaRes.value.json();
+          figmaData = figmaJson?.data as DesignerActivity[] | null ?? null;
+          figmaFileData = (figmaJson?.files ?? []) as FigmaFileStats[];
+        } else {
+          errors.push(describeError("Figma", figmaRes.value));
+        }
+      } else {
+        errors.push(describeError("Figma"));
+      }
+
+      // Parse Asana
+      let asanaData: AsanaTask[] | null = null;
+      if (asanaRes.status === "fulfilled") {
+        if (asanaRes.value.ok) {
+          asanaData = (await asanaRes.value.json()).data as AsanaTask[];
+        } else {
+          errors.push(describeError("Asana", asanaRes.value));
+        }
+      } else {
+        errors.push(describeError("Asana"));
+      }
+
+      // Parse completed tasks (non-critical, no error surfaced)
       const completedData = completedRes.status === "fulfilled" && completedRes.value.ok
         ? (await completedRes.value.json()).data as AsanaTask[] : null;
+
+      // Parse snapshots (non-critical)
       const snapshotsData = snapshotsRes.status === "fulfilled" && snapshotsRes.value.ok
         ? (await snapshotsRes.value.json()).data as WeeklySnapshot[] : [];
+
+      // Parse cache timestamps (non-critical)
       const cacheData = cacheRes.status === "fulfilled" && cacheRes.value.ok
         ? await cacheRes.value.json() : null;
 
       if (!figmaData && !asanaData) {
-        setApiError("No data returned. Check env vars.");
+        const msg = errors.length > 0 ? errors.join(". ") : "No data returned. Check env vars.";
+        setApiError(msg);
         setLoading(false); setRefreshing(false); return;
       }
+
+      // Surface partial errors even when some data loaded
+      if (errors.length > 0) setApiError(errors.join(". "));
 
       setSource(prev => ({
         ...prev,
@@ -345,7 +361,7 @@ export default function DesignIntelDashboard() {
         mode: figmaData && asanaData ? "api" : figmaData || asanaData ? "mixed" : prev.mode,
       }));
     } catch (err) {
-      setApiError(err instanceof Error ? err.message : "Fetch failed");
+      setApiError(err instanceof Error ? err.message : "Network error \u2014 check your connection");
     }
     setLoading(false);
     setRefreshing(false);
