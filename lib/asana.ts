@@ -6,6 +6,7 @@ export interface AsanaTask {
   gid: string;
   name: string;
   assignee: { gid: string; name: string } | null;
+  followers: Array<{ gid: string; name: string }>;
   due_on: string | null;
   completed: boolean;
   completed_at: string | null;
@@ -33,6 +34,7 @@ const ASANA_API = "https://app.asana.com/api/1.0";
 // Fields to request — keeps responses lean
 const TASK_FIELDS = [
   "gid", "name", "assignee.name", "assignee.gid",
+  "followers.name", "followers.gid",
   "due_on", "completed", "completed_at",
   "created_at", "modified_at",
   "projects.name", "projects.gid",

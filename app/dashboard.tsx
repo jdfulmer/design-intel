@@ -13,6 +13,7 @@ import {
 import {
   DESIGN_TEAM, TEAM_FIGMA_NAMES, TEAM_ASANA_NAMES,
   toFigmaName, NON_CLIENT_PROJECTS,
+  getTeamMembers, isTeamInvolved,
 } from "@/lib/team-config";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -47,6 +48,7 @@ interface AsanaTask {
   gid: string;
   name: string;
   assignee: { gid: string; name: string } | null;
+  followers?: Array<{ gid: string; name: string }>;
   due_on: string | null;
   completed: boolean;
   completed_at: string | null;
@@ -70,7 +72,7 @@ interface DataSource {
 // Name mappings & NON_CLIENT_PROJECTS imported from @/lib/team-config
 
 function isTeamTask(task: AsanaTask): boolean {
-  return task.assignee !== null && TEAM_ASANA_NAMES.has(task.assignee.name);
+  return isTeamInvolved(task);
 }
 
 // ── Theme Constants ──────────────────────────────────────────────────────────
@@ -852,20 +854,24 @@ function DashboardShell({
   const taskStats = useMemo(() => {
     const total = teamTasks.length;
     const overdue = teamTasks.filter(isOverdue).length;
-    const byAssignee: Record<string, { total: number; overdue: number }> = {};
+    const byMember: Record<string, { total: number; overdue: number }> = {};
     const byProject: Record<string, number> = {};
     for (const t of teamTasks) {
-      const name = t.assignee?.name ?? "Unassigned";
-      byAssignee[name] ??= { total: 0, overdue: 0 };
-      byAssignee[name].total++;
-      if (isOverdue(t)) byAssignee[name].overdue++;
+      // Count task for each team member involved (assignee + collaborators)
+      const members = getTeamMembers(t);
+      if (members.length === 0) members.push(t.assignee?.name ?? "Unassigned");
+      for (const name of members) {
+        byMember[name] ??= { total: 0, overdue: 0 };
+        byMember[name].total++;
+        if (isOverdue(t)) byMember[name].overdue++;
+      }
       for (const p of t.projects) {
         if (!NON_CLIENT_PROJECTS.has(p.name)) byProject[p.name] = (byProject[p.name] ?? 0) + 1;
       }
     }
     return {
       total, overdue,
-      topAssignees: Object.entries(byAssignee).map(([name, s]) => ({ name, ...s })).sort((a, b) => b.total - a.total),
+      topAssignees: Object.entries(byMember).map(([name, s]) => ({ name, ...s })).sort((a, b) => b.total - a.total),
       topProjects: Object.entries(byProject).sort((a, b) => b[1] - a[1]).slice(0, 8),
     };
   }, [teamTasks]);
@@ -915,12 +921,15 @@ function DashboardShell({
   const designerClients = useMemo(() => {
     const map: Record<string, string[]> = {};
     for (const t of teamTasks) {
-      const fn = toFigmaName(t.assignee?.name ?? "");
-      if (!fn) continue;
-      for (const p of t.projects) {
-        if (NON_CLIENT_PROJECTS.has(p.name)) continue;
-        map[fn] ??= [];
-        if (!map[fn].includes(p.name)) map[fn].push(p.name);
+      const members = getTeamMembers(t);
+      for (const member of members) {
+        const fn = toFigmaName(member);
+        if (!fn) continue;
+        for (const p of t.projects) {
+          if (NON_CLIENT_PROJECTS.has(p.name)) continue;
+          map[fn] ??= [];
+          if (!map[fn].includes(p.name)) map[fn].push(p.name);
+        }
       }
     }
     return map;
@@ -940,11 +949,14 @@ function DashboardShell({
   const workload = useMemo(() => {
     const byName: Record<string, { active: number; overdue: number }> = {};
     for (const t of teamTasks) {
-      const fn = toFigmaName(t.assignee?.name ?? "");
-      if (!fn) continue;
-      byName[fn] ??= { active: 0, overdue: 0 };
-      byName[fn].active++;
-      if (isOverdue(t)) byName[fn].overdue++;
+      const members = getTeamMembers(t);
+      for (const member of members) {
+        const fn = toFigmaName(member);
+        if (!fn) continue;
+        byName[fn] ??= { active: 0, overdue: 0 };
+        byName[fn].active++;
+        if (isOverdue(t)) byName[fn].overdue++;
+      }
     }
     const allNames = new Set([...teamFigma.map(d => d.name), ...Object.keys(byName)]);
     return Array.from(allNames).map(name => {
@@ -980,14 +992,17 @@ function DashboardShell({
 
   // Per-designer cycle time for workload tab
   const designerCycleTime = useMemo(() => {
-    const byAssignee: Record<string, Array<{ created_at: string; completed_at: string | null }>> = {};
+    const byMember: Record<string, Array<{ created_at: string; completed_at: string | null }>> = {};
     for (const t of completedTasks) {
-      const name = t.assignee?.name ?? "Unassigned";
-      byAssignee[name] ??= [];
-      byAssignee[name].push({ created_at: t.created_at, completed_at: t.completed_at });
+      const members = getTeamMembers(t);
+      if (members.length === 0) members.push(t.assignee?.name ?? "Unassigned");
+      for (const name of members) {
+        byMember[name] ??= [];
+        byMember[name].push({ created_at: t.created_at, completed_at: t.completed_at });
+      }
     }
     const result: Record<string, number | null> = {};
-    for (const [name, tasks] of Object.entries(byAssignee)) {
+    for (const [name, tasks] of Object.entries(byMember)) {
       result[name] = avgCycleTime(tasks);
     }
     return result;
@@ -1024,11 +1039,12 @@ function DashboardShell({
     const clientDesignersMap: Record<string, Set<string>> = {};
     const clientTaskCount: Record<string, number> = {};
     for (const t of teamTasks) {
-      if (!t.assignee) continue;
+      const members = getTeamMembers(t);
+      if (members.length === 0) continue;
       for (const p of t.projects) {
         if (NON_CLIENT_PROJECTS.has(p.name)) continue;
         clientDesignersMap[p.name] ??= new Set();
-        clientDesignersMap[p.name].add(t.assignee.name);
+        for (const m of members) clientDesignersMap[p.name].add(m);
         clientTaskCount[p.name] = (clientTaskCount[p.name] ?? 0) + 1;
       }
     }
@@ -1103,7 +1119,9 @@ function DashboardShell({
   const overdueOverlay = useMemo(() => {
     const overdueTasks = teamTasks.filter(isOverdue);
     return overdueTasks.map(t => {
-      const figmaName = toFigmaName(t.assignee?.name ?? "");
+      const members = getTeamMembers(t);
+      const primaryName = members[0] ?? t.assignee?.name ?? "Unassigned";
+      const figmaName = toFigmaName(primaryName);
       const figmaDesigner = teamFigma.find(d => d.name === figmaName);
       // Check if this designer has Figma activity on the same client project
       const taskClients = t.projects.filter(p => !NON_CLIENT_PROJECTS.has(p.name)).map(p => p.name);
@@ -1138,7 +1156,7 @@ function DashboardShell({
       typeMap[tp].total++;
       if (isOverdue(t)) typeMap[tp].overdue++;
       if (t.completed) typeMap[tp].completed++;
-      if (t.assignee) typeMap[tp].designers.add(t.assignee.name);
+      for (const m of getTeamMembers(t)) typeMap[tp].designers.add(m);
     }
     return Object.entries(typeMap)
       .map(([type, s]) => ({ type, ...s, designerCount: s.designers.size }))
@@ -1168,7 +1186,10 @@ function DashboardShell({
       const asanaNames = Object.entries(DESIGN_TEAM)
         .filter(([, fig]) => fig === selectedDesigner)
         .map(([asana]) => asana);
-      result = result.filter(t => t.assignee && asanaNames.includes(t.assignee.name));
+      result = result.filter(t => {
+        const members = getTeamMembers(t);
+        return members.some(m => asanaNames.includes(m));
+      });
     }
     if (selectedClient) {
       result = result.filter(t => t.projects.some(p => p.name === selectedClient));
@@ -1180,20 +1201,23 @@ function DashboardShell({
     const tasks = filteredTeamTasks;
     const total = tasks.length;
     const overdue = tasks.filter(isOverdue).length;
-    const byAssignee: Record<string, { total: number; overdue: number }> = {};
+    const byMember: Record<string, { total: number; overdue: number }> = {};
     const byProject: Record<string, number> = {};
     for (const t of tasks) {
-      const name = t.assignee?.name ?? "Unassigned";
-      byAssignee[name] ??= { total: 0, overdue: 0 };
-      byAssignee[name].total++;
-      if (isOverdue(t)) byAssignee[name].overdue++;
+      const members = getTeamMembers(t);
+      if (members.length === 0) members.push(t.assignee?.name ?? "Unassigned");
+      for (const name of members) {
+        byMember[name] ??= { total: 0, overdue: 0 };
+        byMember[name].total++;
+        if (isOverdue(t)) byMember[name].overdue++;
+      }
       for (const p of t.projects) {
         if (!NON_CLIENT_PROJECTS.has(p.name)) byProject[p.name] = (byProject[p.name] ?? 0) + 1;
       }
     }
     return {
       total, overdue,
-      topAssignees: Object.entries(byAssignee).map(([name, s]) => ({ name, ...s })).sort((a, b) => b.total - a.total),
+      topAssignees: Object.entries(byMember).map(([name, s]) => ({ name, ...s })).sort((a, b) => b.total - a.total),
       topProjects: Object.entries(byProject).sort((a, b) => b[1] - a[1]).slice(0, 8),
     };
   }, [filteredTeamTasks]);

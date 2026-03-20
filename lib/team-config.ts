@@ -39,5 +39,28 @@ export function toAsanaName(figmaName: string): string {
   return entry ? entry[0] : figmaName;
 }
 
+/** Get all team member Asana names involved in a task (assignee + followers) */
+export function getTeamMembers(task: { assignee: { name: string } | null; followers?: Array<{ name: string }> }): string[] {
+  const names: string[] = [];
+  if (task.assignee && TEAM_ASANA_NAMES.has(task.assignee.name)) {
+    names.push(task.assignee.name);
+  }
+  for (const f of task.followers ?? []) {
+    if (TEAM_ASANA_NAMES.has(f.name) && !names.includes(f.name)) {
+      names.push(f.name);
+    }
+  }
+  return names;
+}
+
+/** Check if any team member is involved in a task (assigned or collaborating) */
+export function isTeamInvolved(task: { assignee: { name: string } | null; followers?: Array<{ name: string }> }): boolean {
+  if (task.assignee && TEAM_ASANA_NAMES.has(task.assignee.name)) return true;
+  for (const f of task.followers ?? []) {
+    if (TEAM_ASANA_NAMES.has(f.name)) return true;
+  }
+  return false;
+}
+
 /** Projects to exclude from client metrics */
 export const NON_CLIENT_PROJECTS = new Set(["Creative Intake", "Creative Tasks", "General Tasks"]);
