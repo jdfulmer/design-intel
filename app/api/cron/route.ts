@@ -34,7 +34,6 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
   const maxCalls = 15; // hard cap on iterations
   const results: Array<{ call: number; status: string; detail?: string }> = [];
   let callCount = 0;
-  let lastStatus = "";
 
   while (callCount < maxCalls && Date.now() - startTime < maxTime) {
     callCount++;
@@ -52,10 +51,6 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
         await new Promise(r => setTimeout(r, 10_000));
         continue;
       }
-
-      // If status hasn't changed, sync isn't progressing (e.g. no KV) — stop
-      if (status === lastStatus) break;
-      lastStatus = status;
 
       if (status === "complete" || data.error) break;
     } catch (err) {

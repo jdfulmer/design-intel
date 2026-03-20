@@ -383,10 +383,9 @@ export default function DesignIntelDashboard() {
     let cancelled = false;
 
     (async () => {
-      const MAX_CALLS = 15;
-      const MAX_MS = 5 * 60 * 1000; // 5 minute hard cap
+      const MAX_CALLS = 20;
+      const MAX_MS = 8 * 60 * 1000; // 8 minute hard cap
       const start = Date.now();
-      let lastSyncStatus = "";
 
       for (let i = 0; i < MAX_CALLS && !cancelled && Date.now() - start < MAX_MS; i++) {
         // 1) Trigger one sync chunk
@@ -394,11 +393,7 @@ export default function DesignIntelDashboard() {
           const res = await fetch("/api/data?source=figma-sync", { method: "POST" });
           if (res.ok) {
             const body = await res.json();
-            const status = body.status ?? "";
-            if (status === "complete" || body.error) break;
-            // If status hasn't changed, sync isn't progressing — stop
-            if (status === lastSyncStatus) break;
-            lastSyncStatus = status;
+            if (body.status === "complete" || body.error) break;
           } else if (res.status === 409) {
             // Another sync in progress (cron or another tab) — just wait and poll
             await new Promise(r => setTimeout(r, 15000));
