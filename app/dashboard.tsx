@@ -274,8 +274,7 @@ export default function DesignIntelDashboard() {
   const [refreshing, setRefreshing] = useState(false);
   const [activeTab, setActiveTab] = useState<"activity" | "tasks" | "pressure" | "workload" | "trends" | "flags">("activity");
   const [figmaSyncing, setFigmaSyncing] = useState(false);
-  const [syncComplete, setSyncComplete] = useState(0); // counter to trigger re-fetch after sync
-  const syncingRef = useRef(false);
+  const syncAttemptedRef = useRef(false);
 
   const fetchFromApi = useCallback(async (force = false) => {
     setRefreshing(true);
@@ -351,27 +350,6 @@ export default function DesignIntelDashboard() {
       // Surface partial errors even when some data loaded
       if (errors.length > 0) setApiError(errors.join(". "));
 
-      // Auto-trigger Figma sync when data is empty (cache expired)
-      const figmaEmpty = !figmaData || (Array.isArray(figmaData) && figmaData.length === 0);
-      if (figmaEmpty && asanaData && !syncingRef.current) {
-        syncingRef.current = true;
-        setFigmaSyncing(true);
-        // Fire-and-forget: chain sync calls in background
-        (async () => {
-          try {
-            for (let i = 0; i < 12; i++) {
-              const res = await fetch("/api/data?source=figma-sync", { method: "POST" });
-              if (!res.ok) break;
-              const data = await res.json();
-              if (data.status === "complete" || data.error) break;
-            }
-          } catch { /* sync failed silently */ }
-          syncingRef.current = false;
-          setFigmaSyncing(false);
-          setSyncComplete(c => c + 1);
-        })();
-      }
-
       setSource(prev => ({
         ...prev,
         figmaActivity: figmaData ?? prev.figmaActivity,
@@ -393,10 +371,69 @@ export default function DesignIntelDashboard() {
 
   useEffect(() => { fetchFromApi(); }, [fetchFromApi]);
 
-  // Re-fetch dashboard data after Figma sync completes
+  // Auto-sync: when Figma data comes back empty, run a sync+poll loop exactly once
   useEffect(() => {
-    if (syncComplete > 0) fetchFromApi();
-  }, [syncComplete]); // eslint-disable-line react-hooks/exhaustive-deps
+    if (loading) return;
+    if (syncAttemptedRef.current) return;
+    // null = not yet fetched, skip. [] = cache expired, trigger sync.
+    if (source.figmaActivity === null || source.figmaActivity.length > 0) return;
+
+    syncAttemptedRef.current = true;
+    setFigmaSyncing(true);
+    let cancelled = false;
+
+    (async () => {
+      const MAX_CALLS = 15;
+      const MAX_MS = 5 * 60 * 1000; // 5 minute hard cap
+      const start = Date.now();
+      let lastSyncStatus = "";
+
+      for (let i = 0; i < MAX_CALLS && !cancelled && Date.now() - start < MAX_MS; i++) {
+        // 1) Trigger one sync chunk
+        try {
+          const res = await fetch("/api/data?source=figma-sync", { method: "POST" });
+          if (res.ok) {
+            const body = await res.json();
+            const status = body.status ?? "";
+            if (status === "complete" || body.error) break;
+            // If status hasn't changed, sync isn't progressing — stop
+            if (status === lastSyncStatus) break;
+            lastSyncStatus = status;
+          } else if (res.status === 409) {
+            // Another sync in progress (cron or another tab) — just wait and poll
+            await new Promise(r => setTimeout(r, 15000));
+          } else {
+            break; // unexpected error
+          }
+        } catch { break; }
+
+        if (cancelled) break;
+
+        // 2) Check if partial data is now available (sync publishes after each file chunk)
+        try {
+          const check = await fetch("/api/data?source=figma");
+          if (check.ok) {
+            const json = await check.json();
+            if (json.data?.length > 0) {
+              setSource(prev => ({
+                ...prev,
+                figmaActivity: json.data,
+                figmaFileStats: json.files?.length > 0 ? json.files : prev.figmaFileStats,
+                figmaFiles: ["Live"],
+                lastFetched: { ...prev.lastFetched, figma: json.syncedAt ?? new Date().toISOString() },
+                mode: prev.asanaTasks ? "api" : "mixed",
+              }));
+              break;
+            }
+          }
+        } catch { /* continue syncing */ }
+      }
+
+      if (!cancelled) setFigmaSyncing(false);
+    })();
+
+    return () => { cancelled = true; };
+  }, [loading, source.figmaActivity]); // eslint-disable-line react-hooks/exhaustive-deps
 
   if (loading) {
     return (
