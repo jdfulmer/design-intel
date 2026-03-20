@@ -4,7 +4,7 @@
 import { kv } from "@vercel/kv";
 
 const TTL_SECONDS = 60 * 60; // 1 hour
-const SYNC_TTL_SECONDS = 60 * 60 * 24; // 24 hours for sync data
+const SYNC_TTL_SECONDS = 60 * 60 * 24 * 7; // 7 days for sync data
 const SNAPSHOT_TTL_SECONDS = 60 * 60 * 24 * 90; // 90 days for weekly snapshots
 const COMPLETED_TTL_SECONDS = 60 * 60 * 6; // 6 hours for completed tasks
 

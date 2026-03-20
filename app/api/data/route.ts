@@ -6,9 +6,11 @@
 import { NextRequest, NextResponse } from "next/server";
 
 export const runtime = "nodejs";
+export const maxDuration = 60;
 
 const SOURCE_TO_PATH: Record<string, string> = {
   figma: "/api/figma",
+  "figma-sync": "/api/figma/sync",
   asana: "/api/asana",
   completed: "/api/asana",
   snapshots: "/api/snapshots",
@@ -68,6 +70,27 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
   }
 
   const res = await fetch(url, { headers });
+  return new NextResponse(res.body, {
+    status: res.status,
+    headers: { "Content-Type": res.headers.get("Content-Type") ?? "application/json" },
+  });
+}
+
+export async function POST(req: NextRequest): Promise<NextResponse> {
+  const source = req.nextUrl.searchParams.get("source");
+  if (source !== "figma-sync") {
+    return NextResponse.json(
+      { error: `POST only supports source=figma-sync` },
+      { status: 400 },
+    );
+  }
+
+  const secret = process.env.API_SECRET;
+  const headers: HeadersInit = {};
+  if (secret) headers["Authorization"] = `Bearer ${secret}`;
+
+  const url = buildInternalUrl(req, source);
+  const res = await fetch(url, { method: "POST", headers });
   return new NextResponse(res.body, {
     status: res.status,
     headers: { "Content-Type": res.headers.get("Content-Type") ?? "application/json" },

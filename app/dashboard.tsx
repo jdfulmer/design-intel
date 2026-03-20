@@ -1,7 +1,7 @@
 "use client";
 // app/dashboard.tsx — Design Intel dashboard (Figma-native light/dark theme)
 
-import { useState, useEffect, useCallback, useMemo } from "react";
+import React, { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import {
   BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell,
   LineChart, Line,
@@ -273,6 +273,9 @@ export default function DesignIntelDashboard() {
   const [apiError, setApiError] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
   const [activeTab, setActiveTab] = useState<"activity" | "tasks" | "pressure" | "workload" | "trends" | "flags">("activity");
+  const [figmaSyncing, setFigmaSyncing] = useState(false);
+  const [syncComplete, setSyncComplete] = useState(0); // counter to trigger re-fetch after sync
+  const syncingRef = useRef(false);
 
   const fetchFromApi = useCallback(async (force = false) => {
     setRefreshing(true);
@@ -348,6 +351,27 @@ export default function DesignIntelDashboard() {
       // Surface partial errors even when some data loaded
       if (errors.length > 0) setApiError(errors.join(". "));
 
+      // Auto-trigger Figma sync when data is empty (cache expired)
+      const figmaEmpty = !figmaData || (Array.isArray(figmaData) && figmaData.length === 0);
+      if (figmaEmpty && asanaData && !syncingRef.current) {
+        syncingRef.current = true;
+        setFigmaSyncing(true);
+        // Fire-and-forget: chain sync calls in background
+        (async () => {
+          try {
+            for (let i = 0; i < 12; i++) {
+              const res = await fetch("/api/data?source=figma-sync", { method: "POST" });
+              if (!res.ok) break;
+              const data = await res.json();
+              if (data.status === "complete" || data.error) break;
+            }
+          } catch { /* sync failed silently */ }
+          syncingRef.current = false;
+          setFigmaSyncing(false);
+          setSyncComplete(c => c + 1);
+        })();
+      }
+
       setSource(prev => ({
         ...prev,
         figmaActivity: figmaData ?? prev.figmaActivity,
@@ -368,6 +392,11 @@ export default function DesignIntelDashboard() {
   }, []);
 
   useEffect(() => { fetchFromApi(); }, [fetchFromApi]);
+
+  // Re-fetch dashboard data after Figma sync completes
+  useEffect(() => {
+    if (syncComplete > 0) fetchFromApi();
+  }, [syncComplete]); // eslint-disable-line react-hooks/exhaustive-deps
 
   if (loading) {
     return (
@@ -397,6 +426,7 @@ export default function DesignIntelDashboard() {
       setActiveTab={setActiveTab}
       theme={theme}
       toggleTheme={toggleTheme}
+      figmaSyncing={figmaSyncing}
     />
   );
 }
@@ -760,7 +790,7 @@ function DetailPanel({ selectedDesigner, selectedClient, designers, filteredTeam
 // ── Dashboard Shell ───────────────────────────────────────────────────────────
 
 function DashboardShell({
-  source, apiError, refreshing, onRefresh, activeTab, setActiveTab, theme, toggleTheme,
+  source, apiError, refreshing, onRefresh, activeTab, setActiveTab, theme, toggleTheme, figmaSyncing,
 }: {
   source: DataSource;
   apiError: string | null;
@@ -770,6 +800,7 @@ function DashboardShell({
   setActiveTab: (t: "activity" | "tasks" | "pressure" | "workload" | "trends" | "flags") => void;
   theme: string;
   toggleTheme: () => void;
+  figmaSyncing?: boolean;
 }) {
   const isMobile = useIsMobile();
   const [sidebarOpen, setSidebarOpen] = useState(false);
@@ -1247,9 +1278,19 @@ function DashboardShell({
           ))}
 
           <div style={{ fontSize: 11, fontWeight: 500, color: V.textTertiary, padding: "16px 8px 4px", textTransform: "uppercase", letterSpacing: 0.5 }}>
-            Team ({designers.length})
+            Team {designers.length > 0 ? `(${designers.length})` : figmaSyncing ? "" : "(0)"}
           </div>
           <div style={{ maxHeight: 200, overflowY: "auto" }}>
+            {designers.length === 0 && figmaSyncing && (
+              <div style={{ padding: "8px 8px", display: "flex", alignItems: "center", gap: 8 }}>
+                <div style={{
+                  width: 12, height: 12, border: `2px solid ${V.divider}`,
+                  borderTopColor: BLUE, borderRadius: "50%",
+                  animation: "spin 0.8s linear infinite", flexShrink: 0,
+                }} />
+                <span style={{ fontSize: 11, color: V.textTertiary }}>Syncing Figma data...</span>
+              </div>
+            )}
             {designers.map(d => (
               <button key={d.name} onClick={() => {
                 setSelectedClient(null);
