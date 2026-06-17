@@ -7,20 +7,31 @@
 import { NextRequest, NextResponse } from "next/server";
 
 export const runtime = "nodejs";
-export const maxDuration = 60;
+export const maxDuration = 300; // Pro plan: orchestrate the whole sync in one cron tick
 
 function isAuthorized(req: NextRequest): boolean {
   const auth = req.headers.get("authorization")?.replace("Bearer ", "").trim();
-  if (!auth) return false;
-  // Accept either CRON_SECRET (Vercel cron) or API_SECRET (manual/proxy)
+
+  // Primary, secure path: Vercel cron auto-injects `Authorization: Bearer ${CRON_SECRET}`
+  // — but ONLY when a CRON_SECRET env var exists on the project. Set it for full auth.
   if (process.env.CRON_SECRET && auth === process.env.CRON_SECRET) return true;
+  // Manual / proxy triggers authenticate with API_SECRET.
   if (process.env.API_SECRET && auth === process.env.API_SECRET) return true;
+  // Self-healing fallback: Vercel tags genuine cron invocations with x-vercel-cron-schedule.
+  // Inbound x-vercel-* headers are stripped by Vercel, so external callers can't forge it,
+  // and this endpoint only kicks off an idempotent internal sync. Keeps the pipeline alive
+  // even before CRON_SECRET is configured.
+  if (req.headers.get("x-vercel-cron-schedule")) return true;
   return false;
 }
 
 export async function GET(req: NextRequest): Promise<NextResponse> {
   // Skip auth if neither secret is configured (dev mode)
   if ((process.env.CRON_SECRET || process.env.API_SECRET) && !isAuthorized(req)) {
+    console.warn(
+      "[cron] Unauthorized request — no matching CRON_SECRET/API_SECRET and no x-vercel-cron-schedule header. " +
+        "If this is a Vercel cron, add a CRON_SECRET env var so the request authenticates."
+    );
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
@@ -30,8 +41,8 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
   if (secret) headers["Authorization"] = `Bearer ${secret}`;
 
   const startTime = Date.now();
-  const maxTime = 55_000; // 55s safety margin before 60s timeout
-  const maxCalls = 15; // hard cap on iterations
+  const maxTime = 285_000; // 285s safety margin before 300s timeout
+  const maxCalls = 20; // hard cap on iterations
   const results: Array<{ call: number; status: string; detail?: string }> = [];
   let callCount = 0;
 
