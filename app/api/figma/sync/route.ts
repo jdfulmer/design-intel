@@ -27,9 +27,9 @@ import {
 export const runtime = "nodejs";
 export const maxDuration = 60;
 
-const DELAY_MS = 1500; // 1.5s between calls — ~40 req/min, moderate pace
-const PROJECTS_PER_CHUNK = 15; // ~15 project-file calls × 1.5s = ~23s + overhead
-const FILES_PER_CHUNK = 8; // ~8 files × 2 calls × 1.5s = ~24s + overhead
+const DELAY_MS = 1000; // 1s between calls — ~60 req/min, still well under Figma limits
+const PROJECTS_PER_CHUNK = 25; // ~25 project-file calls × 1s = ~25s + overhead (< 60s)
+const FILES_PER_CHUNK = 12; // ~12 files × 2 calls × 1s = ~24s + overhead (< 60s)
 
 function delay(ms: number): Promise<void> {
   return new Promise((r) => setTimeout(r, ms));
