@@ -45,6 +45,9 @@ official light/dark token sets) in the three-panel layout.
 - **Type scale** (Inter) and **component sets with variants** — `Pill` (property: Severity =
   Danger/Warn/Info/Ok), `Button` (property: Style = Primary/Secondary), plus `StatCard` and
   `Avatar` components.
+- **Theming demo** — one variable-bound dashboard card shown in **Light** and explicit **Dark**
+  mode side by side, proving the whole token set (including mode-specific values like
+  `color/danger`) drives both themes from a single definition.
 
 ## Quick start
 
