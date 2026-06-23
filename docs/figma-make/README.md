@@ -14,6 +14,14 @@ prototype).
 | [`sample-data.json`](./sample-data.json) | Seed data that matches the live proxy responses 1:1, so the demo boots instantly and swaps to live with no shape changes. Attach as context. |
 | [`asana-integration.md`](./asana-integration.md) | The priority piece: exact live-Asana endpoint contract, custom-field → priority mapping, people-name join, deep links, and the open-proxy security note. |
 
+## First-pass design file
+
+A hand-built Figma design of the dashboard (Activity view, light theme) is available as a visual
+starting point alongside the Figma Make prompt:
+**https://www.figma.com/design/aRRPpCVHQ1FTitidbeYBLO** — "Design Intel — Dashboard Demo (first pass)".
+It renders the three-panel layout (sidebar, leaderboard + hottest files, detail panel) from the
+sample data using the production design tokens.
+
 ## Quick start
 
 1. Open Figma Make (Pro seat ✓).
