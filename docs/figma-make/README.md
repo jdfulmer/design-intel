@@ -23,11 +23,11 @@ as a visual starting point for Figma Make and as a portfolio piece:
 Everything is built from the sample data using the production design tokens (Inter + Figma's
 official light/dark token sets) in the three-panel layout.
 
-**Page 1 — product screens**
+**Product page**
 - **Six views, light + dark** — Activity (leaderboard + hottest files), Tasks (delivery metrics +
   project/creative/assignee breakdowns), Pressure (client pressure index), Workload (per-designer
-  balance), Trends (weekly mini charts), Flags (severity-coded alerts). Light row on top, dark
-  row below.
+  balance), Trends (real weekly bar charts — throughput, cycle time, on-time %, edits), Flags
+  (severity-coded alerts). Light row on top, dark row below.
 - **Drill-down detail panels** — fill the contextual right panel: **Designer** (on Activity),
   **Client** (on Pressure — pressure index, a breakdown that sums to the headline, deadlines) and
   **File** (on Activity — edits/comments/heat/contributors + a recent-activity feed).
@@ -36,6 +36,15 @@ official light/dark token sets) in the three-panel layout.
   states.
 - **Ask Design Intel** — a natural-language query screen that visualizes the MCP layer: a grounded
   answer with an inline data card and source chips, plus a panel listing which MCP tools fired.
+
+**Signal redesign (product-feedback driven)** — see [`docs/research/signal-redesign-cycle.md`](../research/signal-redesign-cycle.md) for the full story:
+- **Case study** (top of file) — "From edit-volume to deadline-neglect": old signal → user insight → redesign.
+- **Cold Deadlines** (concept + **v2**) — flags work that's due soon and going quiet. v2 is the
+  rules engine made visible: tiered flags with "why" chips, a **Healthy** (status-guard) and
+  **Needs-link** state, PM-priority weighting, and inline **I've got this / Snooze / Reassign** actions.
+- **Push to stakeholder** — Slack/email **owner nudge → auto-escalation** to the lead, with inline actions.
+- **Coverage & Balance** — the leaderboard reframed away from edit-ranking to *project coverage*
+  (is every project attended to?) and *team balance* (capacity, for load-shifting — not scoring).
 
 **Page 2 — Design System**
 - **Color tokens as Figma variables** — one collection with **Light and Dark modes** and 11

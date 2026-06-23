@@ -27,6 +27,7 @@ A hand-built [Figma design file](https://www.figma.com/design/aRRPpCVHQ1FTitidbe
 - [Product Requirements (PRD)](docs/PRD.md) — problem, users, data model, metric definitions, phases, risks.
 - [Figma Make Demo Kit](docs/figma-make/README.md) — prompt + exports to rebuild the dashboard as an interactive Figma demo, plus the full design-file contents.
 - [Pitch deck prompt](docs/pitch/figma-slides-deck-prompt.md) — a Figma Slides build prompt for talking through the project with Figma staff.
+- [Signal redesign cycle](docs/research/signal-redesign-cycle.md) — a worked product cycle (feedback → leadership appraisal → build → UX research → v2) behind the Cold Deadlines reframe.
 
 ---
 
