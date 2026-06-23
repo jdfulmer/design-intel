@@ -16,11 +16,14 @@ prototype).
 
 ## First-pass design file
 
-A hand-built Figma design of the dashboard (Activity view, light theme) is available as a visual
-starting point alongside the Figma Make prompt:
+A hand-built Figma design of the dashboard is available as a visual starting point alongside the
+Figma Make prompt:
 **https://www.figma.com/design/aRRPpCVHQ1FTitidbeYBLO** — "Design Intel — Dashboard Demo (first pass)".
-It renders the three-panel layout (sidebar, leaderboard + hottest files, detail panel) from the
-sample data using the production design tokens.
+It renders all six views as light-theme frames — **Activity** (leaderboard + hottest files),
+**Tasks** (delivery metrics + project/creative/assignee breakdowns), **Pressure** (client pressure
+index), **Workload** (per-designer balance table), **Trends** (weekly mini charts), and **Flags**
+(severity-coded alerts) — in the three-panel layout, built from the sample data using the
+production design tokens.
 
 ## Quick start
 
