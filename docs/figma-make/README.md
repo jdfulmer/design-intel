@@ -19,11 +19,12 @@ prototype).
 A hand-built Figma design of the dashboard is available as a visual starting point alongside the
 Figma Make prompt:
 **https://www.figma.com/design/aRRPpCVHQ1FTitidbeYBLO** — "Design Intel — Dashboard Demo (first pass)".
-It renders all six views as light-theme frames — **Activity** (leaderboard + hottest files),
-**Tasks** (delivery metrics + project/creative/assignee breakdowns), **Pressure** (client pressure
-index), **Workload** (per-designer balance table), **Trends** (weekly mini charts), and **Flags**
-(severity-coded alerts) — in the three-panel layout, built from the sample data using the
-production design tokens.
+It renders all six views as frames in **both light and dark theme** (Figma's official light/dark
+token sets) — **Activity** (leaderboard + hottest files), **Tasks** (delivery metrics +
+project/creative/assignee breakdowns), **Pressure** (client pressure index), **Workload**
+(per-designer balance table), **Trends** (weekly mini charts), and **Flags** (severity-coded
+alerts) — in the three-panel layout, built from the sample data using the production design
+tokens. Light frames are the top row; dark frames the row below.
 
 ## Quick start
 
