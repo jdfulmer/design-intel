@@ -1,0 +1,78 @@
+{
+  "$description": "Design Intel design tokens — extracted from app/dashboard.tsx. Paste into Figma Make so the generated demo matches the production dashboard exactly. Figma's official light/dark token system + brand accents.",
+  "typography": {
+    "fontFamily": "'Inter', -apple-system, BlinkMacSystemFont, sans-serif",
+    "scale": {
+      "metricValue": { "size": 22, "weight": 600, "letterSpacing": -0.5 },
+      "sectionTitle": { "size": 14, "weight": 600 },
+      "bodyStrong": { "size": 13, "weight": 500 },
+      "body": { "size": 12, "weight": 500 },
+      "label": { "size": 11, "weight": 500 },
+      "labelCaps": { "size": 10, "weight": 600, "textTransform": "uppercase" }
+    }
+  },
+  "radius": { "sm": 6, "md": 8 },
+  "brand": {
+    "blue": "#0D99FF",
+    "green": "#14AE5C",
+    "red": "#F24822",
+    "orange": "#FFA629",
+    "purple": "#7B61FF"
+  },
+  "avatarColors": ["#0D99FF", "#7B61FF", "#14AE5C", "#E04678", "#FFA629", "#00B8D9", "#6554C0", "#36B37E"],
+  "themes": {
+    "light": {
+      "bg": "#FFFFFF",
+      "surface": "#F5F5F5",
+      "elevated": "#EAEAEA",
+      "hover": "#F0F0F0",
+      "border": "#E6E6E6",
+      "divider": "#E6E6E6",
+      "text": "#000000E5",
+      "textSecondary": "#00000080",
+      "textTertiary": "#0000004D",
+      "textQuaternary": "#00000026",
+      "selectedBg": "#E5F4FF",
+      "selectedText": "#007BE5",
+      "textDanger": "#DC3412",
+      "textSuccess": "#009951",
+      "textWarning": "#B86200",
+      "textComponent": "#8638E5",
+      "scrollbar": "#D9D9D9",
+      "scrollbarHover": "#BFBFBF",
+      "tooltipBg": "#2C2C2C",
+      "tooltipBorder": "#444444",
+      "chartTick": "#0000004D"
+    },
+    "dark": {
+      "bg": "#1E1E1E",
+      "surface": "#2C2C2C",
+      "elevated": "#383838",
+      "hover": "#444444",
+      "border": "#444444",
+      "divider": "#333333",
+      "text": "#FFFFFFE5",
+      "textSecondary": "#FFFFFF80",
+      "textTertiary": "#FFFFFF4D",
+      "textQuaternary": "#FFFFFF26",
+      "selectedBg": "#0D99FF26",
+      "selectedText": "#0D99FF",
+      "textDanger": "#F24822",
+      "textSuccess": "#14AE5C",
+      "textWarning": "#FFA629",
+      "textComponent": "#7B61FF",
+      "scrollbar": "#383838",
+      "scrollbarHover": "#444444",
+      "tooltipBg": "#383838",
+      "tooltipBorder": "#444444",
+      "chartTick": "#FFFFFF4D"
+    }
+  },
+  "severity": {
+    "danger": { "light": "#DC3412", "dark": "#F24822" },
+    "warn": { "light": "#B86200", "dark": "#FFA629" },
+    "ok": { "light": "#009951", "dark": "#14AE5C" },
+    "info": { "light": "#007BE5", "dark": "#0D99FF" }
+  },
+  "defaultTheme": "light"
+}

@@ -14,6 +14,16 @@ A password-protected, mobile-responsive dashboard with light/dark theme support 
 **Phase 2 — MCP Server** (Claude Code + claude.ai)
 Eight tools that let Claude query your design ops data directly — ask natural language questions about team workload, client pressure, overdue tasks, and weekly summaries.
 
+**Phase 3 — Figma Make Demo** (interactive, in Figma)
+An interactive, data-connected demo of the dashboard built in [Figma Make](https://www.figma.com/make/) — runs in Figma's native environment, with live Asana task/priority data flowing through the existing Vercel proxy. See [`docs/figma-make/`](docs/figma-make/) for the prompt and exports.
+
+---
+
+## Documentation
+
+- [Product Requirements (PRD)](docs/PRD.md) — problem, users, data model, metric definitions, phases, risks.
+- [Figma Make Demo Kit](docs/figma-make/README.md) — prompt + exports to rebuild the dashboard as an interactive Figma demo.
+
 ---
 
 ## Dashboard Views
