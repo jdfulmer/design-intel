@@ -17,12 +17,16 @@ Eight tools that let Claude query your design ops data directly — ask natural 
 **Phase 3 — Figma Make Demo** (interactive, in Figma)
 An interactive, data-connected demo of the dashboard built in [Figma Make](https://www.figma.com/make/) — runs in Figma's native environment, with live Asana task/priority data flowing through the existing Vercel proxy. See [`docs/figma-make/`](docs/figma-make/) for the prompt and exports.
 
+**Phase 4 — Figma design file & design system** (native Figma)
+A hand-built [Figma design file](https://www.figma.com/design/aRRPpCVHQ1FTitidbeYBLO) generated from code via the Plugin API: all six views in light **and** dark, drill-down detail panels (designer/client/file), responsive mobile, an onboarding/connect flow, empty/loading/error states, an "Ask Design Intel" natural-language (MCP) screen, and a **Design System page** backed by real Figma **variables** (Light/Dark modes) and **component sets with variants**. There's also a [pitch deck build prompt](docs/pitch/figma-slides-deck-prompt.md) for Figma Slides.
+
 ---
 
 ## Documentation
 
 - [Product Requirements (PRD)](docs/PRD.md) — problem, users, data model, metric definitions, phases, risks.
-- [Figma Make Demo Kit](docs/figma-make/README.md) — prompt + exports to rebuild the dashboard as an interactive Figma demo.
+- [Figma Make Demo Kit](docs/figma-make/README.md) — prompt + exports to rebuild the dashboard as an interactive Figma demo, plus the full design-file contents.
+- [Pitch deck prompt](docs/pitch/figma-slides-deck-prompt.md) — a Figma Slides build prompt for talking through the project with Figma staff.
 
 ---
 

@@ -14,17 +14,37 @@ prototype).
 | [`sample-data.json`](./sample-data.json) | Seed data that matches the live proxy responses 1:1, so the demo boots instantly and swaps to live with no shape changes. Attach as context. |
 | [`asana-integration.md`](./asana-integration.md) | The priority piece: exact live-Asana endpoint contract, custom-field → priority mapping, people-name join, deep links, and the open-proxy security note. |
 
-## First-pass design file
+## Figma design file
 
-A hand-built Figma design of the dashboard is available as a visual starting point alongside the
-Figma Make prompt:
-**https://www.figma.com/design/aRRPpCVHQ1FTitidbeYBLO** — "Design Intel — Dashboard Demo (first pass)".
-It renders all six views as frames in **both light and dark theme** (Figma's official light/dark
-token sets) — **Activity** (leaderboard + hottest files), **Tasks** (delivery metrics +
-project/creative/assignee breakdowns), **Pressure** (client pressure index), **Workload**
-(per-designer balance table), **Trends** (weekly mini charts), and **Flags** (severity-coded
-alerts) — in the three-panel layout, built from the sample data using the production design
-tokens. Light frames are the top row; dark frames the row below.
+A hand-built Figma design of the product, generated from code through the Plugin API and used both
+as a visual starting point for Figma Make and as a portfolio piece:
+**https://www.figma.com/design/aRRPpCVHQ1FTitidbeYBLO** — "Design Intel — Dashboard Demo".
+
+Everything is built from the sample data using the production design tokens (Inter + Figma's
+official light/dark token sets) in the three-panel layout.
+
+**Page 1 — product screens**
+- **Six views, light + dark** — Activity (leaderboard + hottest files), Tasks (delivery metrics +
+  project/creative/assignee breakdowns), Pressure (client pressure index), Workload (per-designer
+  balance), Trends (weekly mini charts), Flags (severity-coded alerts). Light row on top, dark
+  row below.
+- **Drill-down detail panels** — fill the contextual right panel: **Designer** (on Activity),
+  **Client** (on Pressure — pressure index, a breakdown that sums to the headline, deadlines) and
+  **File** (on Activity — edits/comments/heat/contributors + a recent-activity feed).
+- **Responsive · onboarding · states** — a mobile Activity screen (390×844) with a bottom tab bar,
+  an onboarding **Connect** flow (Figma + Asana OAuth, read-only), and **loading / empty / error**
+  states.
+- **Ask Design Intel** — a natural-language query screen that visualizes the MCP layer: a grounded
+  answer with an inline data card and source chips, plus a panel listing which MCP tools fired.
+
+**Page 2 — Design System**
+- **Color tokens as Figma variables** — one collection with **Light and Dark modes** and 11
+  semantic tokens (`color/bg`, `color/surface`, `color/border`, `color/text*`, `color/accent`,
+  `color/success`, `color/warning`, `color/danger`, `color/violet`). Swatches are bound to the
+  variables, so switching mode reflows them.
+- **Type scale** (Inter) and **component sets with variants** — `Pill` (property: Severity =
+  Danger/Warn/Info/Ok), `Button` (property: Style = Primary/Secondary), plus `StatCard` and
+  `Avatar` components.
 
 ## Quick start
 
