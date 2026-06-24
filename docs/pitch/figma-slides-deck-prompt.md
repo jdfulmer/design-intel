@@ -1,4 +1,4 @@
-# Figma Slides Deck — Build Prompt
+# Figma Slides Deck: Build Prompt
 
 A copy-paste prompt to generate a **Figma Slides** deck about Design Intel, used as a live
 "quick reference" while talking with people who work at Figma. Goal: spark an ideation
