@@ -53,6 +53,8 @@ interface AsanaTask {
   completed: boolean;
   completed_at: string | null;
   created_at: string;
+  modified_at?: string;
+  memberships?: Array<{ section: { name: string } | null }>;
   projects: Array<{ gid: string; name: string }>;
   custom_fields: Array<{ name: string; display_value: string | null; number_value?: number | null }>;
 }
@@ -1007,6 +1009,47 @@ function DashboardShell({
     }
     return result;
   }, [completedTasks]);
+
+  // ── Cold Deadlines ─────────────────────────────────────────────────────────
+  // Due soon AND gone quiet, before it slips. Protects the work without
+  // rewarding edit volume. Tasks in review or recently touched are left off.
+  const coldDeadlines = useMemo(() => {
+    const now = Date.now();
+    const DAY = 86400000;
+    const REVIEW = /review|qa|approv|done|complete|ship|launch|live/i;
+    const priorityOf = (t: AsanaTask): string | null => {
+      const f = t.custom_fields?.find(c => /priorit|prio/i.test(c.name));
+      return f?.display_value ?? null;
+    };
+    const priRank = (p: string | null): number => {
+      if (!p) return 9;
+      const s = p.toLowerCase();
+      if (/p0|urgent|highest|critical/.test(s)) return 0;
+      if (/p1|high/.test(s)) return 1;
+      if (/p2|med|normal/.test(s)) return 2;
+      return 3;
+    };
+    const rows = teamTasks
+      .filter(t => !t.completed && t.due_on)
+      .map(t => {
+        const inReview = (t.memberships ?? []).some(m => m.section && REVIEW.test(m.section.name));
+        const daysToDue = Math.floor((new Date(t.due_on as string).getTime() - now) / DAY);
+        const quietDays = t.modified_at ? Math.floor((now - new Date(t.modified_at).getTime()) / DAY) : null;
+        const q = quietDays ?? 999;
+        let tier: "critical" | "high" | "watch" | null = null;
+        if (!inReview) {
+          if (daysToDue <= 2 && q >= 5) tier = "critical";
+          else if (daysToDue <= 5 && q >= 5) tier = "high";
+          else if (daysToDue <= 7 && q >= 3) tier = "watch";
+        }
+        const priority = priorityOf(t);
+        return { t, daysToDue, quietDays, tier, priority, priRank: priRank(priority) };
+      })
+      .filter((r): r is typeof r & { tier: "critical" | "high" | "watch" } => r.tier !== null);
+    const order: Record<string, number> = { critical: 0, high: 1, watch: 2 };
+    rows.sort((a, b) => (order[a.tier] - order[b.tier]) || (a.priRank - b.priRank) || (a.daysToDue - b.daysToDue));
+    return rows;
+  }, [teamTasks]);
 
   // ── Operational Flags ─────────────────────────────────────────────────────
   const flags = useMemo((): Flag[] => {
@@ -1967,6 +2010,54 @@ function DashboardShell({
           {/* ── Flags Tab ── */}
           {activeTab === "flags" && (
             <div>
+              {/* Cold Deadlines — due soon and going quiet */}
+              {coldDeadlines.length > 0 && (
+                <div style={{ marginBottom: 24 }}>
+                  <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", marginBottom: 8 }}>
+                    <div>
+                      <div style={{ fontSize: 14, fontWeight: 600, color: V.text }}>Cold deadlines</div>
+                      <div style={{ fontSize: 11, color: V.textTertiary, marginTop: 2 }}>Due soon and going quiet, before it slips</div>
+                    </div>
+                    <div style={{ fontSize: 12, fontWeight: 600, color: RED }}>{coldDeadlines.length} need attention</div>
+                  </div>
+                  <div className={isMobile ? "di-scroll-x" : undefined} style={isMobile ? { overflowX: "auto" } : undefined}>
+                  <div style={{ background: V.surface, borderRadius: 8, border: `1px solid ${V.divider}`, overflow: "hidden", minWidth: isMobile ? 520 : undefined }}>
+                    {coldDeadlines.slice(0, 12).map((r, i) => {
+                      const tierColor = r.tier === "critical" ? RED : r.tier === "high" ? ORANGE : BLUE;
+                      const tierLabel = r.tier === "critical" ? "Critical" : r.tier === "high" ? "High" : "Watch";
+                      const dueChip = r.daysToDue < 0 ? `${Math.abs(r.daysToDue)}d overdue` : r.daysToDue === 0 ? "Due today" : `Due in ${r.daysToDue}d`;
+                      const dueColor = r.daysToDue <= 2 ? RED : ORANGE;
+                      const quietChip = r.quietDays === null ? "No recent updates" : `Quiet ${r.quietDays}d`;
+                      const chip = (text: string, color: string, tint: boolean) => (
+                        <span style={{ fontSize: 10, fontWeight: 600, color: tint ? color : V.textSecondary, background: tint ? `${color}1f` : V.elevated, padding: "2px 8px", borderRadius: 6, whiteSpace: "nowrap" }}>{text}</span>
+                      );
+                      return (
+                        <div key={r.t.gid} style={{
+                          display: "flex", alignItems: "center", gap: 12, padding: "12px 16px",
+                          borderBottom: i < Math.min(coldDeadlines.length, 12) - 1 ? `1px solid ${V.divider}` : "none",
+                        }}>
+                          <div style={{ flex: 1, minWidth: 0 }}>
+                            <a href={asanaTaskUrl(r.t.gid)} target="_blank" rel="noopener noreferrer" style={{
+                              fontSize: 13, fontWeight: 600, color: V.text, textDecoration: "none", display: "block",
+                              overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
+                            }}>{r.t.name}</a>
+                            <div style={{ display: "flex", gap: 6, marginTop: 6, flexWrap: "wrap" }}>
+                              {chip(dueChip, dueColor, true)}
+                              {chip(quietChip, "", false)}
+                              {r.t.assignee && chip(r.t.assignee.name, "", false)}
+                            </div>
+                          </div>
+                          {r.priority && <span style={{ fontSize: 11, fontWeight: 700, color: V.textSecondary, background: V.elevated, padding: "3px 8px", borderRadius: 5, flexShrink: 0 }}>{r.priority}</span>}
+                          <span style={{ fontSize: 10, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.06em", color: tierColor, background: `${tierColor}1f`, padding: "3px 9px", borderRadius: 100, flexShrink: 0 }}>{tierLabel}</span>
+                        </div>
+                      );
+                    })}
+                  </div>
+                  </div>
+                  <div style={{ fontSize: 11, color: V.textTertiary, marginTop: 8 }}>Flagged when a task is due soon and has gone quiet. Tasks in review or recently updated are left off, so it never cries wolf.</div>
+                </div>
+              )}
+
               {/* Flags grid */}
               <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "1fr 1fr", gap: 12, marginBottom: 24 }}>
                 {flags.map((flag, i) => {
