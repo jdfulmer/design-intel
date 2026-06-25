@@ -1,7 +1,26 @@
 // lib/cache.ts — Vercel KV cache layer (1hr TTL)
 // Falls back gracefully if KV is not configured (e.g. local dev without KV)
 
-import { kv } from "@vercel/kv";
+import { createClient, type VercelKV } from "@vercel/kv";
+
+// Accept either the KV_* names (Vercel KV integration) or the UPSTASH_REDIS_*
+// names (Upstash marketplace integration), so reconnecting the store never
+// requires renaming env vars.
+function kvCreds(): { url: string; token: string } | null {
+  const url = process.env.KV_REST_API_URL || process.env.UPSTASH_REDIS_REST_URL;
+  const token = process.env.KV_REST_API_TOKEN || process.env.UPSTASH_REDIS_REST_TOKEN;
+  if (!url || !token) return null;
+  return { url, token };
+}
+
+let _kv: VercelKV | null = null;
+function getKV(): VercelKV | null {
+  if (_kv) return _kv;
+  const creds = kvCreds();
+  if (!creds) return null;
+  _kv = createClient(creds);
+  return _kv;
+}
 
 const TTL_SECONDS = 60 * 60; // 1 hour
 const SYNC_TTL_SECONDS = 60 * 60 * 24 * 7; // 7 days for sync data
@@ -22,13 +41,13 @@ export interface CacheTimestamps {
 }
 
 function isKVConfigured(): boolean {
-  return !!(process.env.KV_REST_API_URL && process.env.KV_REST_API_TOKEN);
+  return kvCreds() !== null;
 }
 
 export async function cacheGet<T>(key: CacheKey): Promise<T | null> {
   if (!isKVConfigured()) return null;
   try {
-    return await kv.get<T>(key);
+    return await getKV()!.get<T>(key);
   } catch (e) {
     console.warn(`[cache] get failed for ${key}:`, e);
     return null;
@@ -42,7 +61,7 @@ export async function cacheSet<T>(key: CacheKey, value: T): Promise<void> {
   else if (key.startsWith("snapshot:week:")) ttl = SNAPSHOT_TTL_SECONDS;
   else if (key.startsWith("asana:completed:")) ttl = COMPLETED_TTL_SECONDS;
   try {
-    await kv.set(key, value, { ex: ttl });
+    await getKV()!.set(key, value, { ex: ttl });
   } catch (e) {
     console.warn(`[cache] set failed for ${key}:`, e);
   }
@@ -51,7 +70,7 @@ export async function cacheSet<T>(key: CacheKey, value: T): Promise<void> {
 export async function cacheDel(key: CacheKey): Promise<void> {
   if (!isKVConfigured()) return;
   try {
-    await kv.del(key);
+    await getKV()!.del(key);
   } catch (e) {
     console.warn(`[cache] del failed for ${key}:`, e);
   }
@@ -60,7 +79,7 @@ export async function cacheDel(key: CacheKey): Promise<void> {
 export async function cacheSetWithTTL<T>(key: CacheKey, value: T, ttlSeconds: number): Promise<void> {
   if (!isKVConfigured()) return;
   try {
-    await kv.set(key, value, { ex: ttlSeconds });
+    await getKV()!.set(key, value, { ex: ttlSeconds });
   } catch (e) {
     console.warn(`[cache] set failed for ${key}:`, e);
   }
@@ -122,7 +141,7 @@ export function getRecentMondays(count: number): string[] {
 export async function cacheGetMany<T>(keys: CacheKey[]): Promise<(T | null)[]> {
   if (!isKVConfigured() || keys.length === 0) return keys.map(() => null);
   try {
-    const results = await kv.mget<T[]>(...keys);
+    const results = await getKV()!.mget<T[]>(...keys);
     return results;
   } catch (e) {
     console.warn(`[cache] mget failed:`, e);
