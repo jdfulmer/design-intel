@@ -1548,7 +1548,13 @@ function DashboardShell({
           {activeTab === "activity" && (
             <div>
             {filteredDesigners.length === 0 ? (
-              <EmptyState title="No designers match" description="Try clearing your filter to see all team members." />
+              figmaSyncing ? (
+                <EmptyState title="Syncing your Figma activity…" description="The first sync reads recent version history and can take a minute. This view fills in automatically once it finishes." />
+              ) : selectedClient ? (
+                <EmptyState title="No designers match this client" description="Clear the client filter to see the whole team." />
+              ) : (
+                <EmptyState title="No Figma activity yet" description="Nothing has synced from Figma. A sync may still be running, or the data store may be disconnected (check the Vercel KV / Upstash connection)." />
+              )
             ) : (
               <>
             <div className={isMobile ? "di-scroll-x" : undefined} style={isMobile ? { overflowX: "auto" } : undefined}>
