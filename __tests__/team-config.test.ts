@@ -34,6 +34,15 @@ describe('clientMatchesFigmaProject', () => {
     expect(clientMatchesFigmaProject('lavanilla amazon', 'AMAZON LAVANILLA')).toBe(true);
   });
 
+  it('matches concatenated camelCase against spaced names (ThisWorks)', () => {
+    expect(clientMatchesFigmaProject('This Works', 'ThisWorks')).toBe(true);
+    expect(clientMatchesFigmaProject('This Works Internal', 'ThisWorks')).toBe(true);
+  });
+
+  it('still matches existing concatenated brands (INNBeauty)', () => {
+    expect(clientMatchesFigmaProject('INNBeauty Project', 'INNBeauty')).toBe(true);
+  });
+
   // ── over-match guards ──
 
   it('does NOT match two brands on the same channel', () => {

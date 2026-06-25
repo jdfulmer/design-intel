@@ -96,6 +96,7 @@ export const CLIENT_FIGMA_ALIASES: Record<string, string[]> = {
 
 function normalizeTokens(name: string): string[] {
   return name
+    .replace(/([a-z0-9])([A-Z])/g, "$1 $2") // split camelCase: "ThisWorks" -> "This Works"
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, " ")
     .trim()
