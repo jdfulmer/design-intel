@@ -1051,6 +1051,46 @@ function DashboardShell({
     return rows;
   }, [teamTasks]);
 
+  // ── Project coverage ─────────────────────────────────────────────────────
+  // Is every active project getting attention, or going dark? Work-level, not
+  // a ranking of people.
+  const projectCoverage = useMemo(() => {
+    const map: Record<string, { tasks: number; designers: Set<string>; lastEdit: number | null }> = {};
+    for (const t of teamTasks) {
+      for (const p of t.projects) {
+        if (NON_CLIENT_PROJECTS.has(p.name)) continue;
+        map[p.name] ??= { tasks: 0, designers: new Set(), lastEdit: null };
+        map[p.name].tasks++;
+        for (const m of getTeamMembers(t)) { const fn = toFigmaName(m); if (fn) map[p.name].designers.add(fn); }
+      }
+    }
+    for (const f of source.figmaFileStats) {
+      if (!f.project || NON_CLIENT_PROJECTS.has(f.project)) continue;
+      const ts = new Date(f.lastModified).getTime();
+      if (Number.isNaN(ts)) continue;
+      const key = Object.keys(map).find(c =>
+        c.toLowerCase().includes(f.project.toLowerCase()) || f.project.toLowerCase().includes(c.toLowerCase()));
+      if (!key) continue;
+      if (map[key].lastEdit === null || ts > map[key].lastEdit) map[key].lastEdit = ts;
+    }
+    const now = Date.now();
+    const DAY = 86400000;
+    return Object.entries(map)
+      .filter(([, m]) => m.tasks > 0)
+      .map(([name, m]) => {
+        const daysSince = m.lastEdit ? Math.floor((now - m.lastEdit) / DAY) : null;
+        let status: "healthy" | "quiet" | "dark";
+        if (m.designers.size === 0) status = "dark";
+        else if (daysSince === null || daysSince > 10) status = "quiet";
+        else status = "healthy";
+        return { name, tasks: m.tasks, designers: Array.from(m.designers), daysSince, status };
+      })
+      .sort((a, b) => {
+        const rank: Record<string, number> = { dark: 0, quiet: 1, healthy: 2 };
+        return rank[a.status] - rank[b.status] || b.tasks - a.tasks;
+      });
+  }, [teamTasks, source.figmaFileStats]);
+
   // ── Operational Flags ─────────────────────────────────────────────────────
   const flags = useMemo((): Flag[] => {
     const f: Flag[] = [];
@@ -1590,6 +1630,79 @@ function DashboardShell({
           {/* ── Activity Tab ── */}
           {activeTab === "activity" && (
             <div>
+            {/* Team balance & project coverage — protect the people and the work */}
+            {teamTasks.length > 0 && (() => {
+              const CAP = 8;
+              const overloaded = workload.filter(d => d.active > CAP).length;
+              const attention = projectCoverage.filter(c => c.status !== "healthy").length;
+              const pill = (label: string, color: string) => (
+                <span style={{ fontSize: 10, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.06em", color, background: `${color}1f`, padding: "3px 9px", borderRadius: 100, flexShrink: 0 }}>{label}</span>
+              );
+              return (
+                <div style={{ display: "flex", flexDirection: "column", gap: 16, marginBottom: 16 }}>
+                  {/* Team balance */}
+                  <div>
+                    <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", marginBottom: 8 }}>
+                      <div>
+                        <div style={{ fontSize: 14, fontWeight: 600, color: V.text }}>Team balance</div>
+                        <div style={{ fontSize: 11, color: V.textTertiary, marginTop: 2 }}>{"Who's over capacity, and who has room. For load-shifting, not scoring."}</div>
+                      </div>
+                      {overloaded > 0 && <div style={{ fontSize: 12, fontWeight: 600, color: RED }}>{overloaded} overloaded</div>}
+                    </div>
+                    <div style={{ background: V.surface, borderRadius: 8, border: `1px solid ${V.divider}`, overflow: "hidden" }}>
+                      {workload.slice(0, 8).map((d, i) => {
+                        const pct = Math.min(d.active / CAP, 1);
+                        const st = d.active > CAP ? { l: "Overloaded", c: RED } : d.active <= 3 ? { l: "Has room", c: GREEN } : { l: "Balanced", c: BLUE };
+                        return (
+                          <div key={d.name} style={{ display: "flex", alignItems: "center", gap: 14, padding: "12px 16px", borderBottom: i < Math.min(workload.length, 8) - 1 ? `1px solid ${V.divider}` : "none" }}>
+                            <div style={{ display: "flex", alignItems: "center", gap: 10, width: isMobile ? 130 : 200, flexShrink: 0, minWidth: 0 }}>
+                              <Avatar name={d.name} size={24} />
+                              <span style={{ fontSize: 13, fontWeight: 500, color: V.text, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{d.name}</span>
+                            </div>
+                            <div style={{ flex: 1, height: 8, background: V.elevated, borderRadius: 4, overflow: "hidden", minWidth: 50 }}>
+                              <div style={{ width: `${pct * 100}%`, height: "100%", background: st.c, borderRadius: 4 }} />
+                            </div>
+                            <span style={{ fontSize: 12, fontWeight: 600, color: V.textSecondary, width: 40, textAlign: "right", flexShrink: 0 }}>{d.active}/{CAP}</span>
+                            {pill(st.l, st.c)}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                  {/* Project coverage */}
+                  {projectCoverage.length > 0 && (
+                    <div>
+                      <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", marginBottom: 8 }}>
+                        <div>
+                          <div style={{ fontSize: 14, fontWeight: 600, color: V.text }}>Project coverage</div>
+                          <div style={{ fontSize: 11, color: V.textTertiary, marginTop: 2 }}>Is every active project getting attention, or going dark?</div>
+                        </div>
+                        {attention > 0 && <div style={{ fontSize: 12, fontWeight: 600, color: RED }}>{attention} need attention</div>}
+                      </div>
+                      <div className={isMobile ? "di-scroll-x" : undefined} style={isMobile ? { overflowX: "auto" } : undefined}>
+                      <div style={{ background: V.surface, borderRadius: 8, border: `1px solid ${V.divider}`, overflow: "hidden", minWidth: isMobile ? 460 : undefined }}>
+                        {projectCoverage.slice(0, 8).map((c, i) => {
+                          const meta = c.status === "dark" ? { l: "No coverage", color: RED, last: "no owner" }
+                            : c.status === "quiet" ? { l: "Going quiet", color: ORANGE, last: c.daysSince != null ? `${c.daysSince}d ago` : "no activity" }
+                            : { l: "Healthy", color: GREEN, last: c.daysSince === 0 ? "today" : `${c.daysSince}d ago` };
+                          return (
+                            <div key={c.name} style={{ display: "flex", alignItems: "center", gap: 12, padding: "12px 16px", borderBottom: i < Math.min(projectCoverage.length, 8) - 1 ? `1px solid ${V.divider}` : "none" }}>
+                              <div style={{ flex: 1, minWidth: 0 }}>
+                                <div style={{ fontSize: 13, fontWeight: 500, color: V.text, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{c.name}</div>
+                                <div style={{ fontSize: 11, color: V.textTertiary, marginTop: 1 }}>{c.tasks} open · {c.designers.length || "no"} designer{c.designers.length === 1 ? "" : "s"}</div>
+                              </div>
+                              <span style={{ fontSize: 12, color: c.status === "healthy" ? V.textTertiary : meta.color, flexShrink: 0, minWidth: 60, textAlign: "right" }}>{meta.last}</span>
+                              {pill(meta.l, meta.color)}
+                            </div>
+                          );
+                        })}
+                      </div>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              );
+            })()}
             {filteredDesigners.length === 0 ? (
               figmaSyncing ? (
                 <EmptyState title="Syncing your Figma activity…" description="The first sync reads recent version history and can take a minute. This view fills in automatically once it finishes." />
