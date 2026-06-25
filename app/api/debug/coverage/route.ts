@@ -9,10 +9,11 @@ import { NextRequest, NextResponse } from "next/server";
 import { cacheGet, asanaCacheKey } from "@/lib/cache";
 import { requireApiSecret } from "@/lib/auth";
 import { clientMatchesFigmaProject, NON_CLIENT_PROJECTS } from "@/lib/team-config";
-import type { AsanaTask } from "@/lib/asana";
+import { fetchAsanaTasks, type AsanaTask } from "@/lib/asana";
 import type { FigmaDesignerActivity } from "@/lib/figma";
 
 export const runtime = "nodejs";
+export const maxDuration = 60;
 
 interface FileStat { name: string; project: string; lastModified: string }
 interface SyncResult { data: FigmaDesignerActivity[]; files?: FileStat[]; syncedAt?: string }
@@ -22,7 +23,19 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
   if (guard) return guard;
 
   const sync = await cacheGet<SyncResult>("figma:latest-sync");
-  const tasks = (await cacheGet<AsanaTask[]>(asanaCacheKey())) ?? [];
+  // Asana payloads can exceed the KV value limit, so the cache write often
+  // fails and "asana:tasks:all" is empty. Read the cache first, but fall back
+  // to a live fetch (same as the dashboard) so client names are always present.
+  let tasks = (await cacheGet<AsanaTask[]>(asanaCacheKey())) ?? [];
+  let asanaSource: "cache" | "live" | "error" = "cache";
+  if (tasks.length === 0) {
+    try {
+      tasks = await fetchAsanaTasks({});
+      asanaSource = "live";
+    } catch {
+      asanaSource = "error";
+    }
+  }
 
   // Distinct Asana client (project) names, excluding internal buckets.
   const asanaClients = Array.from(
@@ -52,6 +65,7 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
 
   return NextResponse.json({
     syncedAt: sync?.syncedAt ?? null,
+    asanaSource,
     counts: {
       asanaClients: asanaClients.length,
       figmaProjects: figmaProjects.length,
