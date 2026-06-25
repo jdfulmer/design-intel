@@ -1916,6 +1916,7 @@ function DashboardShell({
           {/* ── Pressure Tab ── */}
           {activeTab === "pressure" && (
             <div>
+            <div style={{ fontSize: 11, color: V.textTertiary, marginBottom: 12 }}>{"Which clients are heating up, so a deadline never slips by surprise."}</div>
             {filteredClientPressure.length === 0 ? (
               <EmptyState title="No clients match" description="Try clearing your filter to see all clients." />
             ) : (
@@ -1970,6 +1971,7 @@ function DashboardShell({
           {/* ── Workload Tab ── */}
           {activeTab === "workload" && (
             <div>
+            <div style={{ fontSize: 11, color: V.textTertiary, marginBottom: 12 }}>{"Spot who's carrying too much, so you can move work before they burn out."}</div>
             {filteredWorkload.length === 0 ? (
               <EmptyState title="No workload data" description="Try clearing your filter to see all team members." />
             ) : (
@@ -2020,7 +2022,7 @@ function DashboardShell({
                     </span>
                     <div style={{ textAlign: "right" }}>
                       {d.highLoad
-                        ? <Badge text="High load" color={RED} bg="rgba(242,72,34,0.12)" />
+                        ? <Badge text="Overloaded" color={RED} bg="rgba(242,72,34,0.12)" />
                         : d.highThru
                         ? <Badge text="High output" color={GREEN} bg="rgba(20,174,92,0.12)" />
                         : <span style={{ fontSize: 11, color: eff.color }}>{eff.text}</span>}
