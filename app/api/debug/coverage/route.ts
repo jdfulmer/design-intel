@@ -133,9 +133,45 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
     (c) => !allTrackedFigmaProjects.some((fp) => clientMatchesFigmaProject(c, fp))
   );
 
+  // ── Probe an arbitrary (possibly untracked) team / project ──────────────────
+  // ?testTeam=<id> verifies a team ID is valid and lists its folders.
+  // ?testProject=<id> lists a folder's files. Used to confirm where a client's
+  // work lives before adding the team to FIGMA_TEAM_IDS.
+  const testTeam = searchParams.get("testTeam");
+  const testProject = searchParams.get("testProject");
+  let testTeamResult: unknown = null;
+  let testProjectResult: unknown = null;
+  if (testTeam) {
+    try {
+      const ps = await fetchTeamProjects(testTeam);
+      testTeamResult = {
+        teamId: testTeam,
+        alreadyTracked: teamIds.includes(testTeam),
+        projectCount: ps.length,
+        projects: ps.map((p) => ({ id: p.id, name: p.name })),
+      };
+    } catch (e) {
+      testTeamResult = { teamId: testTeam, error: e instanceof Error ? e.message : "fetch failed" };
+    }
+  }
+  if (testProject) {
+    try {
+      const fs = await fetchProjectFiles(testProject);
+      testProjectResult = {
+        projectId: testProject,
+        fileCount: fs.length,
+        files: fs.map((f) => ({ name: f.name, last_modified: f.last_modified })),
+      };
+    } catch (e) {
+      testProjectResult = { projectId: testProject, error: e instanceof Error ? e.message : "fetch failed" };
+    }
+  }
+
   return NextResponse.json({
     syncedAt: sync?.syncedAt ?? null,
     asanaSource,
+    testTeam: testTeamResult,
+    testProject: testProjectResult,
     counts: {
       asanaClients: asanaClients.length,
       figmaProjects: figmaProjects.length,

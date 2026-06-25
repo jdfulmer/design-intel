@@ -45,6 +45,12 @@ function buildInternalUrl(req: NextRequest, source: string): string {
   if (searchParams.has("findFile")) {
     url.searchParams.set("findFile", searchParams.get("findFile")!);
   }
+  if (searchParams.has("testTeam")) {
+    url.searchParams.set("testTeam", searchParams.get("testTeam")!);
+  }
+  if (searchParams.has("testProject")) {
+    url.searchParams.set("testProject", searchParams.get("testProject")!);
+  }
 
   return url.toString();
 }
