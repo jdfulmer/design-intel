@@ -12,7 +12,7 @@ import {
 } from "@/lib/metrics";
 import {
   DESIGN_TEAM, TEAM_FIGMA_NAMES, TEAM_ASANA_NAMES,
-  toFigmaName, NON_CLIENT_PROJECTS,
+  toFigmaName, isNonClientProject,
   getTeamMembers, isTeamInvolved, clientMatchesFigmaProject,
 } from "@/lib/team-config";
 
@@ -33,6 +33,13 @@ interface FigmaFileStats {
   edits: number;
   comments: number;
   designers: string[];
+  lastModified: string;
+}
+
+// Last-edit time per Figma project across ALL files — covers every tracked
+// project, not just the recently-edited files that make the hot-files list.
+interface FigmaProjectActivity {
+  name: string;
   lastModified: string;
 }
 
@@ -62,6 +69,7 @@ interface AsanaTask {
 interface DataSource {
   figmaActivity: DesignerActivity[] | null;
   figmaFileStats: FigmaFileStats[];
+  figmaProjectActivity: FigmaProjectActivity[];
   asanaTasks: AsanaTask[] | null;
   completedTasks: AsanaTask[] | null;
   snapshots: WeeklySnapshot[];
@@ -267,7 +275,7 @@ function useTheme(): [string, () => void] {
 export default function DesignIntelDashboard() {
   const [theme, toggleTheme] = useTheme();
   const [source, setSource] = useState<DataSource>({
-    figmaActivity: null, figmaFileStats: [],
+    figmaActivity: null, figmaFileStats: [], figmaProjectActivity: [],
     asanaTasks: null, completedTasks: null, snapshots: [],
     figmaFiles: [], asanaFiles: [],
     lastFetched: { figma: null, asana: null },
@@ -309,11 +317,13 @@ export default function DesignIntelDashboard() {
       // Parse Figma
       let figmaData: DesignerActivity[] | null = null;
       let figmaFileData: FigmaFileStats[] = [];
+      let figmaProjectData: FigmaProjectActivity[] = [];
       if (figmaRes.status === "fulfilled") {
         if (figmaRes.value.ok) {
           const figmaJson = await figmaRes.value.json();
           figmaData = figmaJson?.data as DesignerActivity[] | null ?? null;
           figmaFileData = (figmaJson?.files ?? []) as FigmaFileStats[];
+          figmaProjectData = (figmaJson?.projects ?? []) as FigmaProjectActivity[];
         } else {
           errors.push(describeError("Figma", figmaRes.value));
         }
@@ -358,6 +368,7 @@ export default function DesignIntelDashboard() {
         ...prev,
         figmaActivity: figmaData ?? prev.figmaActivity,
         figmaFileStats: figmaFileData.length > 0 ? figmaFileData : prev.figmaFileStats,
+        figmaProjectActivity: figmaProjectData.length > 0 ? figmaProjectData : prev.figmaProjectActivity,
         asanaTasks: asanaData ?? prev.asanaTasks,
         completedTasks: completedData ?? prev.completedTasks,
         snapshots: snapshotsData.length > 0 ? snapshotsData : prev.snapshots,
@@ -418,6 +429,7 @@ export default function DesignIntelDashboard() {
                 ...prev,
                 figmaActivity: json.data,
                 figmaFileStats: json.files?.length > 0 ? json.files : prev.figmaFileStats,
+                figmaProjectActivity: json.projects?.length > 0 ? json.projects : prev.figmaProjectActivity,
                 figmaFiles: ["Live"],
                 lastFetched: { ...prev.lastFetched, figma: json.syncedAt ?? new Date().toISOString() },
                 mode: prev.asanaTasks ? "api" : "mixed",
@@ -868,7 +880,7 @@ function DashboardShell({
         if (isOverdue(t)) byMember[name].overdue++;
       }
       for (const p of t.projects) {
-        if (!NON_CLIENT_PROJECTS.has(p.name)) byProject[p.name] = (byProject[p.name] ?? 0) + 1;
+        if (!isNonClientProject(p.name)) byProject[p.name] = (byProject[p.name] ?? 0) + 1;
       }
     }
     return {
@@ -885,7 +897,7 @@ function DashboardShell({
     // Active tasks
     for (const t of teamTasks) {
       for (const p of t.projects) {
-        if (NON_CLIENT_PROJECTS.has(p.name)) continue;
+        if (isNonClientProject(p.name)) continue;
         clientMap[p.name] ??= { tasks: 0, overdue: 0 };
         clientMap[p.name].tasks++;
         if (isOverdue(t)) clientMap[p.name].overdue++;
@@ -895,14 +907,14 @@ function DashboardShell({
     for (const t of completedTasks) {
       if (!isTeamTask(t)) continue;
       for (const p of t.projects) {
-        if (NON_CLIENT_PROJECTS.has(p.name)) continue;
+        if (isNonClientProject(p.name)) continue;
         clientMap[p.name] ??= { tasks: 0, overdue: 0 };
       }
     }
     // Figma projects — surface clients with design activity but no tasking
     for (const d of teamFigma) {
       for (const p of d.projects) {
-        if (NON_CLIENT_PROJECTS.has(p)) continue;
+        if (isNonClientProject(p)) continue;
         clientMap[p] ??= { tasks: 0, overdue: 0 };
       }
     }
@@ -928,7 +940,7 @@ function DashboardShell({
         const fn = toFigmaName(member);
         if (!fn) continue;
         for (const p of t.projects) {
-          if (NON_CLIENT_PROJECTS.has(p.name)) continue;
+          if (isNonClientProject(p.name)) continue;
           map[fn] ??= [];
           if (!map[fn].includes(p.name)) map[fn].push(p.name);
         }
@@ -1058,14 +1070,20 @@ function DashboardShell({
     const map: Record<string, { tasks: number; designers: Set<string>; lastEdit: number | null }> = {};
     for (const t of teamTasks) {
       for (const p of t.projects) {
-        if (NON_CLIENT_PROJECTS.has(p.name)) continue;
+        if (isNonClientProject(p.name)) continue;
         map[p.name] ??= { tasks: 0, designers: new Set(), lastEdit: null };
         map[p.name].tasks++;
         for (const m of getTeamMembers(t)) { const fn = toFigmaName(m); if (fn) map[p.name].designers.add(fn); }
       }
     }
-    for (const f of source.figmaFileStats) {
-      if (!f.project || NON_CLIENT_PROJECTS.has(f.project)) continue;
+    // Last-edit time per client. Prefer the full per-project activity (covers
+    // every tracked project); fall back to hot-file stats for older syncs.
+    const projectActivity: Array<{ project: string; lastModified: string }> =
+      source.figmaProjectActivity.length > 0
+        ? source.figmaProjectActivity.map(p => ({ project: p.name, lastModified: p.lastModified }))
+        : source.figmaFileStats.map(f => ({ project: f.project, lastModified: f.lastModified }));
+    for (const f of projectActivity) {
+      if (!f.project || isNonClientProject(f.project)) continue;
       const ts = new Date(f.lastModified).getTime();
       if (Number.isNaN(ts)) continue;
       const key = Object.keys(map).find(c => clientMatchesFigmaProject(c, f.project));
@@ -1088,7 +1106,7 @@ function DashboardShell({
         const rank: Record<string, number> = { dark: 0, quiet: 1, healthy: 2 };
         return rank[a.status] - rank[b.status] || b.tasks - a.tasks;
       });
-  }, [teamTasks, source.figmaFileStats]);
+  }, [teamTasks, source.figmaFileStats, source.figmaProjectActivity]);
 
   // ── Operational Flags ─────────────────────────────────────────────────────
   const flags = useMemo((): Flag[] => {
@@ -1100,7 +1118,7 @@ function DashboardShell({
     for (const t of teamTasks) {
       if (isOverdue(t)) {
         for (const p of t.projects) {
-          if (!NON_CLIENT_PROJECTS.has(p.name)) {
+          if (!isNonClientProject(p.name)) {
             overdueByClient[p.name] = (overdueByClient[p.name] ?? 0) + 1;
           }
         }
@@ -1124,7 +1142,7 @@ function DashboardShell({
       const members = getTeamMembers(t);
       if (members.length === 0) continue;
       for (const p of t.projects) {
-        if (NON_CLIENT_PROJECTS.has(p.name)) continue;
+        if (isNonClientProject(p.name)) continue;
         clientDesignersMap[p.name] ??= new Set();
         for (const m of members) clientDesignersMap[p.name].add(m);
         clientTaskCount[p.name] = (clientTaskCount[p.name] ?? 0) + 1;
@@ -1206,7 +1224,7 @@ function DashboardShell({
       const figmaName = toFigmaName(primaryName);
       const figmaDesigner = teamFigma.find(d => d.name === figmaName);
       // Check if this designer has Figma activity on the same client project
-      const taskClients = t.projects.filter(p => !NON_CLIENT_PROJECTS.has(p.name)).map(p => p.name);
+      const taskClients = t.projects.filter(p => !isNonClientProject(p.name)).map(p => p.name);
       const matchedProjects = figmaDesigner?.projects.filter(fp =>
         taskClients.some(tc => clientMatchesFigmaProject(tc, fp))
       ) ?? [];
@@ -1294,7 +1312,7 @@ function DashboardShell({
         if (isOverdue(t)) byMember[name].overdue++;
       }
       for (const p of t.projects) {
-        if (!NON_CLIENT_PROJECTS.has(p.name)) byProject[p.name] = (byProject[p.name] ?? 0) + 1;
+        if (!isNonClientProject(p.name)) byProject[p.name] = (byProject[p.name] ?? 0) + 1;
       }
     }
     return {

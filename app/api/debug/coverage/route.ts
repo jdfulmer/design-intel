@@ -8,7 +8,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { cacheGet, asanaCacheKey } from "@/lib/cache";
 import { requireApiSecret } from "@/lib/auth";
-import { clientMatchesFigmaProject, NON_CLIENT_PROJECTS } from "@/lib/team-config";
+import { clientMatchesFigmaProject, isNonClientProject } from "@/lib/team-config";
 import { fetchAsanaTasks, type AsanaTask } from "@/lib/asana";
 import { fetchTeamProjects, type FigmaDesignerActivity } from "@/lib/figma";
 
@@ -42,7 +42,7 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
     new Set(
       tasks.flatMap((t) => (t.projects ?? []).map((p) => p.name))
     )
-  ).filter((n) => !NON_CLIENT_PROJECTS.has(n)).sort();
+  ).filter((n) => !isNonClientProject(n)).sort();
 
   // Distinct Figma folder names seen in the sync — from per-file stats AND from
   // each designer's project list (covers both data sources the dashboard uses).
@@ -51,7 +51,7 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
       ...((sync?.files ?? []).map((f) => f.project)),
       ...((sync?.data ?? []).flatMap((d) => d.projects ?? [])),
     ])
-  ).filter((n) => n && !NON_CLIENT_PROJECTS.has(n)).sort();
+  ).filter((n) => n && !isNonClientProject(n)).sort();
 
   // Match matrix
   const matchedPairs: Array<{ client: string; figma: string }> = [];

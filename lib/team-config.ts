@@ -62,8 +62,21 @@ export function isTeamInvolved(task: { assignee: { name: string } | null; follow
   return false;
 }
 
-/** Projects to exclude from client metrics */
-export const NON_CLIENT_PROJECTS = new Set(["Creative Intake", "Creative Tasks", "General Tasks"]);
+/** Projects to exclude from client metrics — internal/ops buckets, not clients */
+export const NON_CLIENT_PROJECTS = new Set([
+  "Creative Intake", "Creative Tasks", "General Tasks",
+  // Internal operations / non-design buckets that surface as Asana "projects"
+  "Budget Timeline", "Client Delivery AR", "Client Delivery Priorities",
+  "Controller Transition", "DSP Monthly Billing", "Global Selling",
+  "MD Fulfillment Service", "MD SEO & Email", "ML and Amazon Mexico",
+  "NEW ASIN/Discontinued ASIN", "Prospect Planning", "SOP Creation",
+  "Template Task Lists", "Lunge Market Defense Integration Tasks",
+]);
+
+/** Trim-tolerant check — Asana project names sometimes carry trailing spaces. */
+export function isNonClientProject(name: string): boolean {
+  return NON_CLIENT_PROJECTS.has(name.trim());
+}
 
 // ── Client (Asana) <-> Figma project-name matching ───────────────────────────
 //

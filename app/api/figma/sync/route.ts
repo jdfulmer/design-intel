@@ -50,12 +50,16 @@ interface SyncState {
   designers: Record<string, { edits: number; comments: number; files: string[]; projects: string[] }>;
   // Accumulated per-file stats
   fileStats: Record<string, { key: string; project: string; edits: number; comments: number; designers: string[]; lastModified: string }>;
+  // Last-modified time per project across ALL files (not window-filtered, not
+  // capped) — powers Coverage for every tracked project, not just hot files.
+  projectLastModified: Record<string, string>;
   updatedAt: string;
 }
 
 interface SyncResult {
   data: FigmaDesignerActivity[];
   files: Array<{ name: string; key: string; project: string; edits: number; comments: number; designers: string[]; lastModified: string }>;
+  projects?: Array<{ name: string; lastModified: string }>;
   syncedAt: string;
   startTime: number;
   endTime: number;
@@ -114,6 +118,7 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
         filesProcessed: 0,
         designers: {},
         fileStats: {},
+        projectLastModified: {},
         updatedAt: new Date().toISOString(),
       };
 
@@ -135,10 +140,17 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
       const chunk = state.allProjects.slice(start, end);
 
       const seen = new Set(state.fileIndex.map(f => f.key));
+      state.projectLastModified ??= {}; // tolerate pre-existing state from an older deploy
 
       for (const project of chunk) {
         const files = await fetchProjectFiles(project.id);
         for (const file of files) {
+          // Record the project's most recent edit across ALL files (no window,
+          // no cap) so Coverage reflects every project, not just hot files.
+          const prev = state.projectLastModified[project.name];
+          if (!prev || file.last_modified > prev) {
+            state.projectLastModified[project.name] = file.last_modified;
+          }
           if (!seen.has(file.key) && new Date(file.last_modified) >= startDate) {
             seen.add(file.key);
             state.fileIndex.push({
@@ -255,9 +267,13 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
         .map(([name, f]) => ({ name, ...f }))
         .sort((a, b) => (b.edits * 3 + b.comments) - (a.edits * 3 + a.comments));
 
+      const projectsArr = Object.entries(state.projectLastModified ?? {})
+        .map(([name, lastModified]) => ({ name, lastModified }));
+
       await cacheSet("figma:latest-sync", {
         data: activity,
         files: fileStatsArr,
+        projects: projectsArr,
         syncedAt: new Date().toISOString(),
         startTime: state.startTime,
         endTime: state.endTime,

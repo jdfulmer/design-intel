@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   clientMatchesFigmaProject,
+  isNonClientProject,
   toFigmaName,
   toAsanaName,
   getTeamMembers,
@@ -86,6 +87,25 @@ describe('clientMatchesFigmaProject', () => {
 
   it('returns false when a name is all generic tokens', () => {
     expect(clientMatchesFigmaProject('Amazon Ads', 'Amazon Campaign')).toBe(false);
+  });
+});
+
+// ── isNonClientProject ───────────────────────────────────────────────────────
+
+describe('isNonClientProject', () => {
+  it('excludes internal ops buckets', () => {
+    expect(isNonClientProject('SOP Creation')).toBe(true);
+    expect(isNonClientProject('MD SEO & Email')).toBe(true);
+  });
+
+  it('tolerates trailing whitespace from Asana names', () => {
+    expect(isNonClientProject('Prospect Planning ')).toBe(true);
+    expect(isNonClientProject('Client Delivery Priorities ')).toBe(true);
+  });
+
+  it('keeps real clients', () => {
+    expect(isNonClientProject('PHLUR')).toBe(false);
+    expect(isNonClientProject('Lavanila - AMAZON')).toBe(false);
   });
 });
 
