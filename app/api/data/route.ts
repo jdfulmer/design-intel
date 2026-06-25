@@ -38,6 +38,13 @@ function buildInternalUrl(req: NextRequest, source: string): string {
   if (searchParams.has("include_completed")) {
     url.searchParams.set("include_completed", searchParams.get("include_completed")!);
   }
+  // Debug-coverage probe params
+  if (searchParams.has("probe")) {
+    url.searchParams.set("probe", searchParams.get("probe")!);
+  }
+  if (searchParams.has("findFile")) {
+    url.searchParams.set("findFile", searchParams.get("findFile")!);
+  }
 
   return url.toString();
 }

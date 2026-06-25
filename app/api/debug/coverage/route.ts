@@ -10,7 +10,7 @@ import { cacheGet, asanaCacheKey } from "@/lib/cache";
 import { requireApiSecret } from "@/lib/auth";
 import { clientMatchesFigmaProject, isNonClientProject } from "@/lib/team-config";
 import { fetchAsanaTasks, type AsanaTask } from "@/lib/asana";
-import { fetchTeamProjects, type FigmaDesignerActivity } from "@/lib/figma";
+import { fetchTeamProjects, fetchProjectFiles, type FigmaDesignerActivity } from "@/lib/figma";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
@@ -70,9 +70,11 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
   const teamIds = (process.env.FIGMA_TEAM_IDS ?? "")
     .split(",").map((s) => s.trim()).filter(Boolean);
   const teams: Array<{ teamId: string; projectCount: number; projects: string[]; error?: string }> = [];
+  const allProjects: Array<{ id: string; name: string }> = [];
   for (const teamId of teamIds) {
     try {
       const projects = await fetchTeamProjects(teamId);
+      allProjects.push(...projects);
       teams.push({
         teamId,
         projectCount: projects.length,
@@ -85,6 +87,45 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
   const allTrackedFigmaProjects = Array.from(
     new Set(teams.flatMap((t) => t.projects))
   ).sort();
+
+  // ── Peek inside catch-all folders ───────────────────────────────────────────
+  // Hypothesis: client work is filed as FILES inside broad project folders
+  // (e.g. "Amazon Assets"), so the client name never appears at the folder
+  // level we match on. List files for projects matching the probe terms.
+  // ?probe=amazon,asset  overrides the default terms. ?findFile=lavanila filters
+  // returned file names to that substring (across ALL projects, capped).
+  const { searchParams } = req.nextUrl;
+  const probeTerms = (searchParams.get("probe") ?? "amazon,asset,template,collaboration,creative,portfolio,pixlfirst,d2e,market defense")
+    .split(",").map((s) => s.trim().toLowerCase()).filter(Boolean);
+  const findFile = (searchParams.get("findFile") ?? "").trim().toLowerCase();
+
+  // Stay well under Figma's ~20 req/min: cap the number of projects we open.
+  const catchAll = allProjects.filter((p) => probeTerms.some((t) => p.name.toLowerCase().includes(t)));
+  const probeTargets = (findFile
+    // Name search: catch-all folders first (most likely home), then the rest.
+    ? [...catchAll, ...allProjects.filter((p) => !catchAll.includes(p))]
+    : catchAll
+  ).slice(0, 18);
+
+  const probedProjectFiles: Array<{ project: string; files: Array<{ name: string; last_modified: string }> }> = [];
+  const fileNameMatches: Array<{ project: string; file: string; last_modified: string }> = [];
+  for (const proj of probeTargets) {
+    try {
+      const files = await fetchProjectFiles(proj.id);
+      if (findFile) {
+        for (const f of files) {
+          if (f.name.toLowerCase().includes(findFile)) {
+            fileNameMatches.push({ project: proj.name, file: f.name, last_modified: f.last_modified });
+          }
+        }
+      } else {
+        probedProjectFiles.push({
+          project: proj.name,
+          files: files.slice(0, 60).map((f) => ({ name: f.name, last_modified: f.last_modified })),
+        });
+      }
+    } catch { /* skip on error */ }
+  }
 
   // Which Asana clients have NO matching project anywhere in the tracked teams
   // (vs. just no recent edit)? These are the real "team not tracked" candidates.
@@ -111,6 +152,11 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
     teams,
     allTrackedFigmaProjects,
     clientsWithNoTrackedFolder,
+    // File-structure probe (does client work live as files inside catch-all folders?)
+    probeTerms,
+    findFile: findFile || null,
+    probedProjectFiles,
+    fileNameMatches,
     allAsanaClients: asanaClients,
     allFigmaProjects: figmaProjects,
   });
