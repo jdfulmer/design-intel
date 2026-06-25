@@ -174,6 +174,21 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
         state.fileIndex.sort((a, b) => new Date(b.last_modified).getTime() - new Date(a.last_modified).getTime());
         state.fileIndex = state.fileIndex.slice(0, 50);
         state.phase = "details";
+
+        // Publish per-project last-edit now (every tracked project is indexed)
+        // so Coverage refreshes without waiting for the slower details crawl.
+        // Merge into the existing result to keep the current leaderboard intact.
+        const projectsArr = Object.entries(state.projectLastModified ?? {})
+          .map(([name, lastModified]) => ({ name, lastModified }));
+        const existing = await cacheGet<SyncResult>("figma:latest-sync");
+        await cacheSet("figma:latest-sync", {
+          data: existing?.data ?? [],
+          files: existing?.files ?? [],
+          projects: projectsArr,
+          syncedAt: existing?.syncedAt ?? new Date().toISOString(),
+          startTime: state.startTime,
+          endTime: state.endTime,
+        } as SyncResult);
       }
 
       await cacheSet(STATE_KEY, state);

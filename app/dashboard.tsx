@@ -386,12 +386,16 @@ export default function DesignIntelDashboard() {
 
   useEffect(() => { fetchFromApi(); }, [fetchFromApi]);
 
-  // Auto-sync: when Figma data comes back empty, run a sync+poll loop exactly once
+  // Auto-sync: run a sync+poll loop once when Figma data is missing. "Missing"
+  // means no designer leaderboard yet OR no per-project coverage yet (the latter
+  // covers an older sync that predates project-level coverage data).
   useEffect(() => {
     if (loading) return;
     if (syncAttemptedRef.current) return;
-    // null = not yet fetched, skip. [] = cache expired, trigger sync.
-    if (source.figmaActivity === null || source.figmaActivity.length > 0) return;
+    if (source.figmaActivity === null) return; // not fetched yet
+    const needDesigners = source.figmaActivity.length === 0;
+    const needProjects = source.figmaProjectActivity.length === 0;
+    if (!needDesigners && !needProjects) return;
 
     syncAttemptedRef.current = true;
     setFigmaSyncing(true);
@@ -419,23 +423,27 @@ export default function DesignIntelDashboard() {
 
         if (cancelled) break;
 
-        // 2) Check if partial data is now available (sync publishes after each file chunk)
+        // 2) Check what's published so far. Designers land at the end of each
+        //    details chunk; per-project coverage lands when indexing completes.
         try {
           const check = await fetch("/api/data?source=figma");
           if (check.ok) {
             const json = await check.json();
-            if (json.data?.length > 0) {
+            const gotDesigners = json.data?.length > 0;
+            const gotProjects = json.projects?.length > 0;
+            if (gotDesigners || gotProjects) {
               setSource(prev => ({
                 ...prev,
-                figmaActivity: json.data,
+                figmaActivity: gotDesigners ? json.data : prev.figmaActivity,
                 figmaFileStats: json.files?.length > 0 ? json.files : prev.figmaFileStats,
-                figmaProjectActivity: json.projects?.length > 0 ? json.projects : prev.figmaProjectActivity,
+                figmaProjectActivity: gotProjects ? json.projects : prev.figmaProjectActivity,
                 figmaFiles: ["Live"],
                 lastFetched: { ...prev.lastFetched, figma: json.syncedAt ?? new Date().toISOString() },
                 mode: prev.asanaTasks ? "api" : "mixed",
               }));
-              break;
             }
+            // Stop once we have everything this run set out to fetch.
+            if ((!needDesigners || gotDesigners) && (!needProjects || gotProjects)) break;
           }
         } catch { /* continue syncing */ }
       }
