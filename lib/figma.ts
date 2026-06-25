@@ -17,9 +17,9 @@ export interface FigmaFileInfo {
 export interface FigmaVersion {
   id: string;
   created_at: string;
-  label: string;
-  description: string;
-  user: { id: string; handle: string; img_url: string };
+  label: string | null;
+  description: string | null;
+  user: { id: string; handle: string; img_url: string | null };
 }
 
 export interface FigmaComment {
@@ -59,12 +59,14 @@ const FigmaVersionsResponse = z.object({
   versions: z.array(z.object({
     id: z.string(),
     created_at: z.string(),
-    label: z.string(),
-    description: z.string(),
+    // Figma returns null label/description for auto-saved (unnamed) versions,
+    // which is the majority of real edit activity. Must tolerate null.
+    label: z.string().nullable().default(null),
+    description: z.string().nullable().default(null),
     user: z.object({
       id: z.string(),
       handle: z.string(),
-      img_url: z.string(),
+      img_url: z.string().nullable().default(null),
     }),
   })).default([]),
 });
