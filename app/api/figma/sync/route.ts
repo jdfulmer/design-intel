@@ -23,6 +23,7 @@ import {
   avgCycleTime, onTimeRate, getMonday, formatDate,
   type WeeklySnapshot,
 } from "@/lib/metrics";
+import { clientMatchesFigmaProject } from "@/lib/team-config";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
@@ -419,11 +420,7 @@ async function generateWeeklySnapshot(
     clients: Object.entries(clientMap)
       .map(([name, c]) => {
         const matched = Object.entries(projectEdits)
-          .filter(
-            ([fp]) =>
-              fp.toLowerCase().includes(name.toLowerCase()) ||
-              name.toLowerCase().includes(fp.toLowerCase())
-          )
+          .filter(([fp]) => clientMatchesFigmaProject(name, fp))
           .reduce((sum, [, v]) => sum + v, 0);
         return { name, ...c, edits: matched };
       })

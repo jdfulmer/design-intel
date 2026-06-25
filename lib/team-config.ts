@@ -64,3 +64,78 @@ export function isTeamInvolved(task: { assignee: { name: string } | null; follow
 
 /** Projects to exclude from client metrics */
 export const NON_CLIENT_PROJECTS = new Set(["Creative Intake", "Creative Tasks", "General Tasks"]);
+
+// ── Client (Asana) <-> Figma project-name matching ───────────────────────────
+//
+// Asana client/project names and Figma folder names rarely match exactly. The
+// shop names projects "Brand + Channel" ("LaVanilla Amazon"), while the Figma
+// folder might be "Amazon - LaVanilla" or just "LaVanilla". Raw substring
+// matching misses these. We compare normalized TOKEN SETS instead, and require a
+// shared *distinctive* (non-channel) token so two different brands on the same
+// channel ("LaVanilla Amazon" vs "BrandX Amazon") never collapse together.
+
+/** Channel/format words too generic to match clients on by themselves. */
+const GENERIC_PROJECT_TOKENS = new Set([
+  "amazon", "walmart", "target", "etsy", "shopify", "ebay", "tiktok", "instagram",
+  "web", "website", "site", "social", "email", "ad", "ads", "advertising",
+  "campaign", "creative", "design", "designs", "assets", "asset", "brand",
+  "branding", "content", "marketing", "general", "misc", "q1", "q2", "q3", "q4",
+  "2024", "2025", "2026", "the", "and", "for", "of",
+]);
+
+/**
+ * Explicit overrides for clients whose Figma folder the token matcher can't
+ * infer (codenames, abbreviations, genuinely ambiguous names). Map an Asana
+ * client name to one or more Figma project-name fragments. Leave empty unless
+ * you spot a specific mismatch — token matching handles the common
+ * "Brand + Channel" cases on its own.
+ */
+export const CLIENT_FIGMA_ALIASES: Record<string, string[]> = {
+  // "LaVanilla Amazon": ["LVA", "La Vanilla"],
+};
+
+function normalizeTokens(name: string): string[] {
+  return name
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, " ")
+    .trim()
+    .split(/\s+/)
+    .filter(Boolean);
+}
+
+function isSubset(small: string[], large: Set<string>): boolean {
+  return small.every((t) => large.has(t));
+}
+
+/**
+ * Does a Figma project/folder name refer to the same client as an Asana project
+ * name? Order- and punctuation-insensitive; guards against matching on channel
+ * words alone; honors CLIENT_FIGMA_ALIASES overrides.
+ */
+export function clientMatchesFigmaProject(clientName: string, figmaProject: string): boolean {
+  if (!clientName || !figmaProject) return false;
+
+  const clientTokens = normalizeTokens(clientName);
+  const figmaTokens = normalizeTokens(figmaProject);
+  if (clientTokens.length === 0 || figmaTokens.length === 0) return false;
+
+  const figmaSet = new Set(figmaTokens);
+
+  // 1) Explicit alias overrides — match if the Figma name contains any alias.
+  const aliases = CLIENT_FIGMA_ALIASES[clientName];
+  if (aliases) {
+    for (const alias of aliases) {
+      const aliasTokens = normalizeTokens(alias);
+      if (aliasTokens.length > 0 && isSubset(aliasTokens, figmaSet)) return true;
+    }
+  }
+
+  // 2) Token-set match: one set is a subset of the other (order/punctuation
+  //    insensitive), AND they share at least one distinctive (non-channel)
+  //    token so "LaVanilla Amazon" and "BrandX Amazon" never merge.
+  const clientSet = new Set(clientTokens);
+  const subset = isSubset(clientTokens, figmaSet) || isSubset(figmaTokens, clientSet);
+  if (!subset) return false;
+
+  return clientTokens.some((t) => figmaSet.has(t) && !GENERIC_PROJECT_TOKENS.has(t));
+}

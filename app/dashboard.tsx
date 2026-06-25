@@ -13,7 +13,7 @@ import {
 import {
   DESIGN_TEAM, TEAM_FIGMA_NAMES, TEAM_ASANA_NAMES,
   toFigmaName, NON_CLIENT_PROJECTS,
-  getTeamMembers, isTeamInvolved,
+  getTeamMembers, isTeamInvolved, clientMatchesFigmaProject,
 } from "@/lib/team-config";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -912,7 +912,7 @@ function DashboardShell({
     }
     return Object.entries(clientMap).map(([name, c]) => {
       const matched = Object.entries(figmaEdits)
-        .filter(([fp]) => fp.toLowerCase().includes(name.toLowerCase()) || name.toLowerCase().includes(fp.toLowerCase()))
+        .filter(([fp]) => clientMatchesFigmaProject(name, fp))
         .reduce((sum, [, v]) => sum + v, 0);
       const score = c.tasks + c.overdue * 3 - Math.min(matched * 0.3, c.tasks);
       return { name, ...c, matchedEdits: matched, pressureScore: Math.round(score) };
@@ -1068,8 +1068,7 @@ function DashboardShell({
       if (!f.project || NON_CLIENT_PROJECTS.has(f.project)) continue;
       const ts = new Date(f.lastModified).getTime();
       if (Number.isNaN(ts)) continue;
-      const key = Object.keys(map).find(c =>
-        c.toLowerCase().includes(f.project.toLowerCase()) || f.project.toLowerCase().includes(c.toLowerCase()));
+      const key = Object.keys(map).find(c => clientMatchesFigmaProject(c, f.project));
       if (!key) continue;
       if (map[key].lastEdit === null || ts > map[key].lastEdit) map[key].lastEdit = ts;
     }
@@ -1209,7 +1208,7 @@ function DashboardShell({
       // Check if this designer has Figma activity on the same client project
       const taskClients = t.projects.filter(p => !NON_CLIENT_PROJECTS.has(p.name)).map(p => p.name);
       const matchedProjects = figmaDesigner?.projects.filter(fp =>
-        taskClients.some(tc => fp.toLowerCase().includes(tc.toLowerCase()) || tc.toLowerCase().includes(fp.toLowerCase()))
+        taskClients.some(tc => clientMatchesFigmaProject(tc, fp))
       ) ?? [];
       return {
         gid: t.gid,
