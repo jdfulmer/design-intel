@@ -91,7 +91,10 @@ const GENERIC_PROJECT_TOKENS = new Set([
  * "Brand + Channel" cases on its own.
  */
 export const CLIENT_FIGMA_ALIASES: Record<string, string[]> = {
-  // "LaVanilla Amazon": ["LVA", "La Vanilla"],
+  // Skacel distributes the HiKoo yarn and addi needle lines.
+  "Skacel": ["Hikoo", "Addi Needles"],
+  // Warner Bros franchises tracked as separate Figma folders.
+  "Warner Brothers - Discovery": ["DC Comics", "Lord of the Rings", "Wizarding World"],
 };
 
 function normalizeTokens(name: string): string[] {

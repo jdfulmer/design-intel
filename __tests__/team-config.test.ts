@@ -43,6 +43,22 @@ describe('clientMatchesFigmaProject', () => {
     expect(clientMatchesFigmaProject('INNBeauty Project', 'INNBeauty')).toBe(true);
   });
 
+  // ── alias overrides ──
+
+  it('matches sub-brands via the alias map (Skacel)', () => {
+    expect(clientMatchesFigmaProject('Skacel', 'Hikoo')).toBe(true);
+    expect(clientMatchesFigmaProject('Skacel', 'Addi Needles')).toBe(true);
+  });
+
+  it('matches franchise folders via the alias map (Warner Bros)', () => {
+    expect(clientMatchesFigmaProject('Warner Brothers - Discovery', 'DC Comics')).toBe(true);
+    expect(clientMatchesFigmaProject('Warner Brothers - Discovery', 'Wizarding World')).toBe(true);
+  });
+
+  it('does not leak aliases to other clients', () => {
+    expect(clientMatchesFigmaProject('Sara Happ', 'Hikoo')).toBe(false);
+  });
+
   // ── over-match guards ──
 
   it('does NOT match two brands on the same channel', () => {

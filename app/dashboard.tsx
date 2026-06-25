@@ -949,16 +949,16 @@ function DashboardShell({
   }, [designerClients]);
 
   const workload = useMemo(() => {
+    // Capacity counts work a designer OWNS (is assigned), not tasks they merely
+    // follow — otherwise everyone reads as overloaded.
     const byName: Record<string, { active: number; overdue: number }> = {};
     for (const t of teamTasks) {
-      const members = getTeamMembers(t);
-      for (const member of members) {
-        const fn = toFigmaName(member);
-        if (!fn) continue;
-        byName[fn] ??= { active: 0, overdue: 0 };
-        byName[fn].active++;
-        if (isOverdue(t)) byName[fn].overdue++;
-      }
+      const assignee = t.assignee?.name;
+      if (!assignee || !TEAM_ASANA_NAMES.has(assignee)) continue;
+      const fn = toFigmaName(assignee);
+      byName[fn] ??= { active: 0, overdue: 0 };
+      byName[fn].active++;
+      if (isOverdue(t)) byName[fn].overdue++;
     }
     const allNames = new Set([...teamFigma.map(d => d.name), ...Object.keys(byName)]);
     return Array.from(allNames).map(name => {

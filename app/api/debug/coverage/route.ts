@@ -10,7 +10,7 @@ import { cacheGet, asanaCacheKey } from "@/lib/cache";
 import { requireApiSecret } from "@/lib/auth";
 import { clientMatchesFigmaProject, NON_CLIENT_PROJECTS } from "@/lib/team-config";
 import { fetchAsanaTasks, type AsanaTask } from "@/lib/asana";
-import type { FigmaDesignerActivity } from "@/lib/figma";
+import { fetchTeamProjects, type FigmaDesignerActivity } from "@/lib/figma";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
@@ -63,6 +63,35 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
   const matchedClients = new Set(matchedPairs.map((m) => m.client));
   const matchedFigma = new Set(matchedPairs.map((m) => m.figma));
 
+  // ── Tracked-team coverage ──────────────────────────────────────────────────
+  // The sync only surfaces folders with a file edited in the last 30 days. To
+  // tell "tracked but quiet" from "team not tracked at all", list EVERY project
+  // across the configured teams (live, lightweight — one call per team).
+  const teamIds = (process.env.FIGMA_TEAM_IDS ?? "")
+    .split(",").map((s) => s.trim()).filter(Boolean);
+  const teams: Array<{ teamId: string; projectCount: number; projects: string[]; error?: string }> = [];
+  for (const teamId of teamIds) {
+    try {
+      const projects = await fetchTeamProjects(teamId);
+      teams.push({
+        teamId,
+        projectCount: projects.length,
+        projects: projects.map((p) => p.name).sort(),
+      });
+    } catch (e) {
+      teams.push({ teamId, projectCount: 0, projects: [], error: e instanceof Error ? e.message : "fetch failed" });
+    }
+  }
+  const allTrackedFigmaProjects = Array.from(
+    new Set(teams.flatMap((t) => t.projects))
+  ).sort();
+
+  // Which Asana clients have NO matching project anywhere in the tracked teams
+  // (vs. just no recent edit)? These are the real "team not tracked" candidates.
+  const clientsWithNoTrackedFolder = asanaClients.filter(
+    (c) => !allTrackedFigmaProjects.some((fp) => clientMatchesFigmaProject(c, fp))
+  );
+
   return NextResponse.json({
     syncedAt: sync?.syncedAt ?? null,
     asanaSource,
@@ -72,10 +101,16 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
       figmaFilesInSync: sync?.files?.length ?? 0,
       tasksCached: tasks.length,
       matchedClients: matchedClients.size,
+      trackedTeams: teams.length,
+      trackedFigmaProjects: allTrackedFigmaProjects.length,
     },
     matchedPairs,
     unmatchedClients: asanaClients.filter((c) => !matchedClients.has(c)),
     unmatchedFigmaProjects: figmaProjects.filter((f) => !matchedFigma.has(f)),
+    // Coverage investigation:
+    teams,
+    allTrackedFigmaProjects,
+    clientsWithNoTrackedFolder,
     allAsanaClients: asanaClients,
     allFigmaProjects: figmaProjects,
   });
