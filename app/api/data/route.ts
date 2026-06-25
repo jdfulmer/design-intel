@@ -16,6 +16,7 @@ const SOURCE_TO_PATH: Record<string, string> = {
   snapshots: "/api/snapshots",
   cache: "/api/cache",
   "cache-bust": "/api/cache",
+  debug: "/api/debug/coverage",
 };
 
 function buildInternalUrl(req: NextRequest, source: string): string {
