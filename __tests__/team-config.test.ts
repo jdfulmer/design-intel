@@ -70,6 +70,12 @@ describe('clientMatchesFigmaProject', () => {
     expect(clientMatchesFigmaProject('LaVanilla Amazon', 'Amazon')).toBe(false);
   });
 
+  it('matches a brand folder regardless of channel suffix on the client', () => {
+    // A folder named just "Lavanila" reaches both Lavanila clients (subset rule).
+    expect(clientMatchesFigmaProject('Lavanila - AMAZON', 'Lavanila')).toBe(true);
+    expect(clientMatchesFigmaProject('Lavanila - Omni-Channel', 'Lavanila')).toBe(true);
+  });
+
   it('does NOT match the same brand on different channels', () => {
     expect(clientMatchesFigmaProject('LaVanilla Amazon', 'LaVanilla Walmart')).toBe(false);
   });

@@ -47,6 +47,7 @@ const FigmaProjectsResponse = z.object({
 });
 
 const FigmaFilesResponse = z.object({
+  name: z.string().optional(), // the project/folder name (returned by /projects/:id/files)
   files: z.array(z.object({
     key: z.string(),
     name: z.string(),
@@ -100,6 +101,14 @@ function getTeamIds(): string[] {
   return ids.split(",").map((id) => id.trim()).filter(Boolean);
 }
 
+/** Explicit project IDs to crawl directly, for projects whose team our token
+ *  can't enumerate (the team 404s but the project is readable by ID). Optional. */
+export function getProjectIds(): string[] {
+  const ids = process.env.FIGMA_PROJECT_IDS;
+  if (!ids) return [];
+  return ids.split(",").map((id) => id.trim()).filter(Boolean);
+}
+
 async function figmaFetch<T>(path: string): Promise<T> {
   const res = await fetch(`${FIGMA_API}${path}`, {
     headers: { "X-Figma-Token": getToken() },
@@ -138,6 +147,21 @@ export async function fetchProjectFiles(
     return [];
   }
   return parsed.data.files;
+}
+
+/** Fetch a project's name and files together (the /projects/:id/files response
+ *  includes the project name). Used for explicit project IDs whose team can't
+ *  be enumerated, so we still get a folder name for matching. */
+export async function fetchProjectInfo(
+  projectId: string
+): Promise<{ name: string; files: FigmaFileInfo[] }> {
+  const raw = await figmaFetch<unknown>(`/projects/${projectId}/files`);
+  const parsed = FigmaFilesResponse.safeParse(raw);
+  if (!parsed.success) {
+    console.warn(`[figma] fetchProjectInfo validation failed for project ${projectId}:`, parsed.error.message);
+    return { name: "", files: [] };
+  }
+  return { name: parsed.data.name ?? "", files: parsed.data.files };
 }
 
 export async function fetchFileVersions(

@@ -11,8 +11,10 @@ import { NextRequest, NextResponse } from "next/server";
 import {
   fetchTeamProjects,
   fetchProjectFiles,
+  fetchProjectInfo,
   fetchFileVersions,
   fetchFileComments,
+  getProjectIds,
   type FigmaDesignerActivity,
 } from "@/lib/figma";
 import { cacheGet, cacheSet, cacheSetWithTTL, cacheDel, setTimestamp, snapshotCacheKey } from "@/lib/cache";
@@ -104,6 +106,21 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
       for (const teamId of teamIds) {
         const projects = await fetchTeamProjects(teamId);
         allProjects.push(...projects);
+        await delay(DELAY_MS);
+      }
+
+      // Explicit project IDs — folders whose team our token can't enumerate.
+      // Fetch each one's name directly so it joins the crawl like any project.
+      const seenProjects = new Set(allProjects.map((p) => p.id));
+      for (const pid of getProjectIds()) {
+        if (seenProjects.has(pid)) continue;
+        try {
+          const info = await fetchProjectInfo(pid);
+          allProjects.push({ id: pid, name: info.name || `Project ${pid}` });
+          seenProjects.add(pid);
+        } catch (e) {
+          console.warn(`[sync] explicit project ${pid} failed:`, e instanceof Error ? e.message : e);
+        }
         await delay(DELAY_MS);
       }
 

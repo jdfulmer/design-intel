@@ -10,7 +10,7 @@ import { cacheGet, asanaCacheKey } from "@/lib/cache";
 import { requireApiSecret } from "@/lib/auth";
 import { clientMatchesFigmaProject, isNonClientProject } from "@/lib/team-config";
 import { fetchAsanaTasks, type AsanaTask } from "@/lib/asana";
-import { fetchTeamProjects, fetchProjectFiles, type FigmaDesignerActivity } from "@/lib/figma";
+import { fetchTeamProjects, fetchProjectFiles, fetchProjectInfo, type FigmaDesignerActivity } from "@/lib/figma";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
@@ -156,11 +156,16 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
   }
   if (testProject) {
     try {
-      const fs = await fetchProjectFiles(testProject);
+      const info = await fetchProjectInfo(testProject);
+      // Which Asana clients would this folder name match? Confirms the matcher
+      // will catch it once the project is crawled.
+      const wouldMatchClients = asanaClients.filter((c) => clientMatchesFigmaProject(c, info.name));
       testProjectResult = {
         projectId: testProject,
-        fileCount: fs.length,
-        files: fs.map((f) => ({ name: f.name, last_modified: f.last_modified })),
+        folderName: info.name,
+        wouldMatchClients,
+        fileCount: info.files.length,
+        files: info.files.map((f) => ({ name: f.name, last_modified: f.last_modified })),
       };
     } catch (e) {
       testProjectResult = { projectId: testProject, error: e instanceof Error ? e.message : "fetch failed" };
