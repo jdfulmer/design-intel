@@ -442,8 +442,13 @@ export default function DesignIntelDashboard() {
                 mode: prev.asanaTasks ? "api" : "mixed",
               }));
             }
-            // Stop once we have everything this run set out to fetch.
-            if ((!needDesigners || gotDesigners) && (!needProjects || gotProjects)) break;
+            // Coverage now publishes after every indexing chunk, so projects
+            // appear partial almost immediately — don't stop on that. Keep going
+            // until the crawl reports complete (handled by the status check
+            // above) so every project is captured; the UI fills in progressively
+            // via setSource each pass. Only short-circuit when this run needed
+            // designers alone and now has them.
+            if (needDesigners && gotDesigners && !needProjects) break;
           }
         } catch { /* continue syncing */ }
       }
