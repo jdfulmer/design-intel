@@ -1664,7 +1664,9 @@ function DashboardShell({
             {teamTasks.length > 0 && (() => {
               const CAP = 8;
               const overloaded = workload.filter(d => d.active > CAP).length;
-              const attention = projectCoverage.filter(c => c.status !== "healthy").length;
+              const healthyCount = projectCoverage.filter(c => c.status === "healthy").length;
+              const quietCount = projectCoverage.filter(c => c.status === "quiet").length;
+              const darkCount = projectCoverage.filter(c => c.status === "dark").length;
               const pill = (label: string, color: string) => (
                 <span style={{ fontSize: 10, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.06em", color, background: `${color}1f`, padding: "3px 9px", borderRadius: 100, flexShrink: 0 }}>{label}</span>
               );
@@ -1680,11 +1682,12 @@ function DashboardShell({
                       {overloaded > 0 && <div style={{ fontSize: 12, fontWeight: 600, color: RED }}>{overloaded} overloaded</div>}
                     </div>
                     <div style={{ background: V.surface, borderRadius: 8, border: `1px solid ${V.divider}`, overflow: "hidden" }}>
-                      {workload.slice(0, 8).map((d, i) => {
+                      <div style={{ maxHeight: 380, overflowY: "auto" }}>
+                      {workload.map((d, i) => {
                         const pct = Math.min(d.active / CAP, 1);
                         const st = d.active > CAP ? { l: "Overloaded", c: RED } : d.active <= 3 ? { l: "Has room", c: GREEN } : { l: "Balanced", c: BLUE };
                         return (
-                          <div key={d.name} style={{ display: "flex", alignItems: "center", gap: 14, padding: "12px 16px", borderBottom: i < Math.min(workload.length, 8) - 1 ? `1px solid ${V.divider}` : "none" }}>
+                          <div key={d.name} style={{ display: "flex", alignItems: "center", gap: 14, padding: "12px 16px", borderBottom: i < workload.length - 1 ? `1px solid ${V.divider}` : "none" }}>
                             <div style={{ display: "flex", alignItems: "center", gap: 10, width: isMobile ? 130 : 200, flexShrink: 0, minWidth: 0 }}>
                               <Avatar name={d.name} size={24} />
                               <span style={{ fontSize: 13, fontWeight: 500, color: V.text, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{d.name}</span>
@@ -1697,6 +1700,7 @@ function DashboardShell({
                           </div>
                         );
                       })}
+                      </div>
                     </div>
                   </div>
                   {/* Project coverage */}
@@ -1707,16 +1711,21 @@ function DashboardShell({
                           <div style={{ fontSize: 14, fontWeight: 600, color: V.text }}>Project coverage</div>
                           <div style={{ fontSize: 11, color: V.textTertiary, marginTop: 2 }}>Is every active project getting attention, or going dark?</div>
                         </div>
-                        {attention > 0 && <div style={{ fontSize: 12, fontWeight: 600, color: RED }}>{attention} need attention</div>}
+                        <div style={{ display: "flex", gap: 14, fontSize: 12, fontWeight: 600, flexWrap: "wrap" }}>
+                          {healthyCount > 0 && <span style={{ color: GREEN }}>{healthyCount} healthy</span>}
+                          {quietCount > 0 && <span style={{ color: ORANGE }}>{quietCount} going quiet</span>}
+                          {darkCount > 0 && <span style={{ color: RED }}>{darkCount} no coverage</span>}
+                        </div>
                       </div>
                       <div className={isMobile ? "di-scroll-x" : undefined} style={isMobile ? { overflowX: "auto" } : undefined}>
                       <div style={{ background: V.surface, borderRadius: 8, border: `1px solid ${V.divider}`, overflow: "hidden", minWidth: isMobile ? 460 : undefined }}>
-                        {projectCoverage.slice(0, 8).map((c, i) => {
+                        <div style={{ maxHeight: 380, overflowY: "auto" }}>
+                        {projectCoverage.map((c, i) => {
                           const meta = c.status === "dark" ? { l: "No coverage", color: RED, last: "no owner" }
                             : c.status === "quiet" ? { l: "Going quiet", color: ORANGE, last: c.daysSince != null ? `${c.daysSince}d ago` : "no activity" }
                             : { l: "Healthy", color: GREEN, last: c.daysSince === 0 ? "today" : `${c.daysSince}d ago` };
                           return (
-                            <div key={c.name} style={{ display: "flex", alignItems: "center", gap: 12, padding: "12px 16px", borderBottom: i < Math.min(projectCoverage.length, 8) - 1 ? `1px solid ${V.divider}` : "none" }}>
+                            <div key={c.name} style={{ display: "flex", alignItems: "center", gap: 12, padding: "12px 16px", borderBottom: i < projectCoverage.length - 1 ? `1px solid ${V.divider}` : "none" }}>
                               <div style={{ flex: 1, minWidth: 0 }}>
                                 <div style={{ fontSize: 13, fontWeight: 500, color: V.text, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{c.name}</div>
                                 <div style={{ fontSize: 11, color: V.textTertiary, marginTop: 1 }}>{c.tasks} open · {c.designers.length || "no"} designer{c.designers.length === 1 ? "" : "s"}</div>
@@ -1726,6 +1735,7 @@ function DashboardShell({
                             </div>
                           );
                         })}
+                        </div>
                       </div>
                       </div>
                     </div>
