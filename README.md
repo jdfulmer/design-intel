@@ -47,6 +47,7 @@ The Ask view posts to `app/api/ask/route.ts`, which calls Claude server-side wit
 app/
   page.tsx            → renders the dashboard
   connect/page.tsx    → onboarding (Step 2 of 3)
+  api/data/route.ts   → dataset endpoint (live aggregation or demo fallback)
   api/ask/route.ts    → Claude proxy, zod-validated
 components/
   Dashboard.jsx       → the entire client app (views, panels, shell)
@@ -54,8 +55,10 @@ lib/
   tokens.ts           → one token system, light + dark
   data.ts             → demo dataset (matches the Figma file)
   metrics.ts          → the formulas
-  figma.ts            → Phase 2 adapter (REST: versions, comments)
-  asana.ts            → Phase 2 adapter (tasks, assignees, due dates)
+  aggregate.ts        → live aggregation engine (Figma × Asana join, 5-min cache)
+  config.ts           → designer identity map, client list, thresholds
+  figma.ts            → Figma REST adapter (versions, comments)
+  asana.ts            → Asana REST adapter (tasks, assignees, due dates)
 tests/
   metrics.test.ts     → formula coverage
 ```
@@ -87,10 +90,21 @@ Design Intel has an active UXR loop (started 2026-07-21: Google Form survey, n=5
 
 ## Deploy
 
+Production runs on Vercel (`design-intel-mu.vercel.app`). With the project linked to this repo, every push to `main` deploys automatically. Manual fallback:
+
 ```bash
-vercel deploy
+vercel deploy --prod
 vercel env add ANTHROPIC_API_KEY
 ```
+
+Live mode additionally needs `FIGMA_TOKEN`, `FIGMA_TEAM_ID`, `ASANA_TOKEN`, and `ASANA_WORKSPACE_GID` (see `.env.example`); without them the app serves the demo dataset.
+
+## Repository history
+
+`main` is the v2.x single-page architecture, and it matches production exactly. Earlier work is preserved in tags, not branches:
+
+- `archive/live-crawl-v2.0` — the previous architecture (OAuth login, KV cache, cron refresh, MCP server scaffolding). The backbone for a future always-live mode.
+- `archive/figma-fit-review` — team charter and role review docs.
 
 ---
 Joshua Fulmer · j.d.fulmer@gmail.com · joshuafulmer.com
