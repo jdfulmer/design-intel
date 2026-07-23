@@ -246,14 +246,14 @@ function TasksView({ T, onSelect }) {
           </Card>
         ))}
       </div>
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
+      <div style={{ display: "grid", gridTemplateColumns: "1fr", gap: 16 }}>
         <Card T={T}>
           <CardHead T={T} title="By Product Area" />
           <div style={{ padding: "10px 18px 14px", display: "flex", flexDirection: "column", gap: 12 }}>
             {DATA.byProject.map(([n, v]) => (
               <div key={n} style={{ display: "flex", alignItems: "center", gap: 12 }}>
                 <span style={{ fontSize: 12, color: T.text2, width: 130, flexShrink: 0 }}>{n}</span>
-                <Bar T={T} pct={(v / maxProj) * 100} w={999} h={7} />
+                <div style={{ flex: 1, minWidth: 0 }}><Bar T={T} pct={(v / maxProj) * 100} w="100%" h={7} /></div>
                 <span style={{ fontSize: 12, fontWeight: 700, color: T.text, width: 24, textAlign: "right" }}>{v}</span>
               </div>
             ))}
@@ -265,7 +265,7 @@ function TasksView({ T, onSelect }) {
             {DATA.byType.map(([n, v]) => (
               <div key={n} style={{ display: "flex", alignItems: "center", gap: 12 }}>
                 <span style={{ fontSize: 12, color: T.text2, width: 130, flexShrink: 0 }}>{n}</span>
-                <Bar T={T} pct={(v / maxType) * 100} tone="purple" w={999} h={7} />
+                <div style={{ flex: 1, minWidth: 0 }}><Bar T={T} pct={(v / maxType) * 100} tone="purple" w="100%" h={7} /></div>
                 <span style={{ fontSize: 12, fontWeight: 700, color: T.text, width: 34, textAlign: "right" }}>{v}%</span>
               </div>
             ))}

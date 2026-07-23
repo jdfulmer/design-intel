@@ -77,6 +77,9 @@ Design Intel has an active UXR loop (started 2026-07-21: Google Form survey, n=5
 
 ## Changelog
 
+### 2.5.1
+- Fixed horizontal overflow on the Tasks view (found live in UXR interview 1, Brandon Merritt, 2026-07-22): By Product Area and By Work Type used fixed 999px bars in a two-column grid, forcing a ~2400px page width. Work Type now stacks below Product Area and both bar sets are fluid (`flex: 1`), so overflow is impossible at any viewport. Layout fix only; no metric, copy, or interaction changes, keeping the stimulus comparable for the rest of the interview round.
+
 ### 2.5.0
 - Removed per-designer Score (leaderboard block + detail-panel chip); leaderboard now sorts by edits. Aligns the product with its own "protect, don't rank" principle and the UXR distrust signal.
 - Project/client references are now clickable across At Risk cards, Flags rows, and detail-panel tasks; unified hover affordance (di-row + pointer if and only if a click target exists). Flags carry an explicit `entityRef` instead of string matching. Detail-panel deadline items stay static by rule: they always belong to the entity already open.
